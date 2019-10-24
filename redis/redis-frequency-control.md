@@ -12,13 +12,15 @@
         burstCapacity:令牌桶上限
         requested:令牌消耗数
         
-    存储一个 token_key 令牌桶剩余令牌数, 
-            timestamp_key 令牌桶最后填充令牌时间，单位：秒。
-        math.min(burstCapacity, tokens_key+(math.max(0, now-timestamp_key)*replenishRate)) 计算剩余最大令牌数
+    存储两个redis key 
+    token_key 令牌桶剩余令牌数, timestamp_key 令牌桶最后填充令牌时间，单位：秒。
+    math.min(burstCapacity, tokens_key+(math.max(0, now-timestamp_key)*replenishRate)) 计算剩余最大令牌数
     当剩余最大令牌数>requested时,取得令牌。最终存储 token_key,timestamp_key.
     
-   与RateLimiter相同都是使用，有访问才更新令牌数的方法。
-    例子: RedisRateLimiter
+   与RateLimiter相同都是使用，有访问才更新令牌数。
+   
+   例子: RedisRateLimiter  
+   [lua脚本地址](https://github.com/q66217910/My-Humiliated-story/blob/master/redis/redisRateLimiter.lua)
     
     
     
