@@ -1,23 +1,21 @@
+--存储 令牌桶上限 key
 local tokens_key = KEYS[1]
+--存储  牌桶最后填充令牌时间，单位：秒。   key
 local timestamp_key = KEYS[2]
---redis.log(redis.LOG_WARNING, "tokens_key " .. tokens_key)
 
+--牌桶填充速率
 local rate = tonumber(ARGV[1])
+--最大令牌上限
 local capacity = tonumber(ARGV[2])
+--当前时间
 local now = tonumber(ARGV[3])
+--请求令牌数
 local requested = tonumber(ARGV[4])
 
 --计算令牌桶充满时间
 local fill_time = capacity/rate
 --保证时间充足
 local ttl = math.floor(fill_time*2)
-
---redis.log(redis.LOG_WARNING, "rate " .. ARGV[1])
---redis.log(redis.LOG_WARNING, "capacity " .. ARGV[2])
---redis.log(redis.LOG_WARNING, "now " .. ARGV[3])
---redis.log(redis.LOG_WARNING, "requested " .. ARGV[4])
---redis.log(redis.LOG_WARNING, "filltime " .. fill_time)
---redis.log(redis.LOG_WARNING, "ttl " .. ttl)
 
 --获取剩余令牌数量
 local last_tokens = tonumber(redis.call("get", tokens_key))
@@ -46,11 +44,6 @@ if allowed then
     new_tokens = filled_tokens - requested
     allowed_num = 1
 end
-
---redis.log(redis.LOG_WARNING, "delta " .. delta)
---redis.log(redis.LOG_WARNING, "filled_tokens " .. filled_tokens)
---redis.log(redis.LOG_WARNING, "allowed_num " .. allowed_num)
---redis.log(redis.LOG_WARNING, "new_tokens " .. new_tokens)
 
 redis.call("setex", tokens_key, ttl, new_tokens)
 redis.call("setex", timestamp_key, ttl, now)

@@ -1,4 +1,5 @@
-# redis获取一个hash的长度
+redis获取一个hash的长度
+===
 
 
 
