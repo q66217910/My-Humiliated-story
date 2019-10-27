@@ -63,3 +63,7 @@ asynchronous非阻塞 IO,完全的非阻塞
         
         1.用户进程发起read操作后立即返回去做其他事,kernel收到asynchronous read后也立刻返回
         2.在数据准备完成后,kernel将数据拷贝到用户内存,并发送给用户signa
+        
+        
+        
+
