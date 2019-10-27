@@ -1,6 +1,8 @@
 Linux I/O多路复用  （epoll）
 ===
-
+    
+  [epoll详解](https://github.com/q66217910/My-Humiliated-story/blob/master/lunix/epoll.md)
+    
    IO请求的流程:
         
         1.准备数据,这时数据可能还没有到达,如还没有收到一个完成的包, kernel需要等待.
@@ -66,4 +68,6 @@ asynchronous非阻塞 IO,完全的非阻塞
         
         
         
+
+
 
