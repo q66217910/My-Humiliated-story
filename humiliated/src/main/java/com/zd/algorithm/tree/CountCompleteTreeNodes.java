@@ -6,17 +6,17 @@ package com.zd.algorithm.tree;
 public class CountCompleteTreeNodes {
 
     public static void main(String[] args) {
-        Node root = new Node(3);
-        Node left = new Node(2);
-        Node right = new Node(4);
-        Node left1 = new Node(1);
+        TreeNode root = new TreeNode(3);
+        TreeNode left = new TreeNode(2);
+        TreeNode right = new TreeNode(4);
+        TreeNode left1 = new TreeNode(1);
         left.setLeft(left1);
         root.setLeft(left);
         root.setRight(right);
         System.out.println(countCompleteTreeNodes(root));
     }
 
-    private static int countCompleteTreeNodes(Node root) {
+    private static int countCompleteTreeNodes(TreeNode root) {
         //根节点不存在
         if (root == null) {
             return 0;
@@ -35,7 +35,7 @@ public class CountCompleteTreeNodes {
     /**
      * 计算子数的高度(递归计算)
      */
-    private static int countChildTreeHigh(Node child) {
+    private static int countChildTreeHigh(TreeNode child) {
         if (child == null) {
             return 0;
         }
