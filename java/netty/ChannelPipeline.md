@@ -1,0 +1,3 @@
+ChannelPipeline
+===
+ChannelPipeline是ChannelHandler的编排管理容器，它内部维护了一个ChannelHandler的链表和迭代器
