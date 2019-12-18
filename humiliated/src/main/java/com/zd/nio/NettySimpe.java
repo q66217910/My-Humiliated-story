@@ -19,7 +19,8 @@ public class NettySimpe {
         // 设置EventLoopGroup
         bootstrap.group(boss, workers)
                 //
-                .channel(NioServerSocketChannel.class);
+                .channel(NioServerSocketChannel.class)
+                .bind();
     }
 
 }
