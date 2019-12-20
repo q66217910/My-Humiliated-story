@@ -19,6 +19,9 @@ NioEventLoop.run()
         ioRatio： 线程分配给 IO 操作所占的时间比
                 (即运行 processSelectedKeys 耗时在整个循环中所占用的时间)
         processSelectedKeys():查询就绪的io事件
+        
+        OP_READ(读事件):
+            
     
      
  
