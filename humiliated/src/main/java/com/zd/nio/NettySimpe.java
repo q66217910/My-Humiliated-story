@@ -1,9 +1,10 @@
 package com.zd.nio;
 
 import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.EventLoopGroup;
+import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.handler.codec.http2.Http2ConnectionHandler;
 
 public class NettySimpe {
 
@@ -20,6 +21,12 @@ public class NettySimpe {
         bootstrap.group(boss, workers)
                 //
                 .channel(NioServerSocketChannel.class)
+                .handler(new ChannelInitializer() {
+                    @Override
+                    protected void initChannel(Channel ch) {
+                        ChannelPipeline p = ch.pipeline();
+                    }
+                })
                 .bind();
     }
 

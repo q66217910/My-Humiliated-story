@@ -21,7 +21,11 @@ NioEventLoop.run()
         processSelectedKeys():查询就绪的io事件
         
         OP_READ(读事件):
-            
+            分配 ByteBuf->从 SocketChannel 中读取数据->调用 pipeline.fireChannelRead 发送一个 inbound 事件.
+        OP_WRITE(写事件):
+            flush
+        OP_CONNECT(连接事件):
+             OP_CONNECT 从就绪事件集中清除, 不然会一直有 OP_CONNECT 事件->调用 unsafe.finishConnect() 通知上层连接已建立
     
      
  
