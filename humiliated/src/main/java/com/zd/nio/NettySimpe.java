@@ -4,7 +4,11 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.handler.codec.MessageToByteEncoder;
+import io.netty.handler.codec.compression.JdkZlibDecoder;
+import io.netty.handler.codec.compression.JdkZlibEncoder;
 import io.netty.handler.codec.http2.Http2ConnectionHandler;
+import io.netty.handler.timeout.IdleStateHandler;
 
 public class NettySimpe {
 
@@ -24,10 +28,13 @@ public class NettySimpe {
                 .handler(new ChannelInitializer() {
                     @Override
                     protected void initChannel(Channel ch) {
-                        ChannelPipeline p = ch.pipeline();
+                        ChannelPipeline pipeline = ch.pipeline();
+                        pipeline.addLast(new JdkZlibEncoder());
+                        pipeline.addLast(new JdkZlibDecoder());
                     }
                 })
-                .bind();
+                .bind()
+                ;
     }
 
 }
