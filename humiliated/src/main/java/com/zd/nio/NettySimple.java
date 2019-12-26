@@ -1,5 +1,6 @@
 package com.zd.nio;
 
+import com.google.common.collect.Lists;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -10,7 +11,9 @@ import io.netty.handler.codec.compression.JdkZlibEncoder;
 import io.netty.handler.codec.http2.Http2ConnectionHandler;
 import io.netty.handler.timeout.IdleStateHandler;
 
-public class NettySimpe {
+import java.util.stream.Collectors;
+
+public class NettySimple {
 
     public static void main(String[] args) {
 
@@ -33,8 +36,7 @@ public class NettySimpe {
                         pipeline.addLast(new JdkZlibDecoder());
                     }
                 })
-                .bind()
-                ;
+                .bind();
     }
 
 }
