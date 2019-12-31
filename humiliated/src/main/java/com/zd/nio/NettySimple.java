@@ -11,11 +11,12 @@ import io.netty.handler.codec.compression.JdkZlibEncoder;
 import io.netty.handler.codec.http2.Http2ConnectionHandler;
 import io.netty.handler.timeout.IdleStateHandler;
 
+import java.util.Arrays;
 import java.util.stream.Collectors;
 
 public class NettySimple {
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws InterruptedException {
 
         //boss线程组负责io        推荐个数1
         EventLoopGroup boss = new NioEventLoopGroup(1);
@@ -26,9 +27,10 @@ public class NettySimple {
         ServerBootstrap bootstrap = new ServerBootstrap();
         // 设置EventLoopGroup
         bootstrap.group(boss, workers)
-                //
+                //  设置channel类型
                 .channel(NioServerSocketChannel.class)
-                .handler(new ChannelInitializer() {
+                //设置pipeline，消息处理链，read执行inbound，write执行outbound
+                .childHandler(new ChannelInitializer<Channel>() {
                     @Override
                     protected void initChannel(Channel ch) {
                         ChannelPipeline pipeline = ch.pipeline();
@@ -36,7 +38,16 @@ public class NettySimple {
                         pipeline.addLast(new JdkZlibDecoder());
                     }
                 })
-                .bind();
+                .bind(8080)
+                .addListener(future -> {
+                    if (future.isSuccess()) {
+                        System.out.println("bind success");
+                    }
+                })
+                .channel()
+                .closeFuture()
+                //阻塞主线程
+                .sync();
     }
 
 }
