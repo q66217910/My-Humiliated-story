@@ -10,6 +10,7 @@ Eureka Client
     3.当服务关闭期间，向Eureka Server取消租约
     4.查询Eureka Server中的服务实例列表
     5.主动下线
+    6. 缓存Application的信息 （全量、增量）
     
 Eureka Server
 ---
@@ -19,6 +20,8 @@ Eureka Server
     2.心跳 （InstanceResource.renewLease()）
     3.下线处理 （InstanceResource.cancelLease()）
     4. 定时清理没有续约的client
+    5. 全量获取服务信息 （ApplicationsResource.getContainers()）
+    6. 增量获取服务信息 （ApplicationsResource.getContainerDifferential()）
     
 自我保护机制
 ---
