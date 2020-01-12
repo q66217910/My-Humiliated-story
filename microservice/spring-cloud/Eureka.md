@@ -22,6 +22,8 @@ Eureka Server
     4. 定时清理没有续约的client
     5. 全量获取服务信息 （ApplicationsResource.getContainers()）
     6. 增量获取服务信息 （ApplicationsResource.getContainerDifferential()）
+    7. 集群同步  （默认采用批量批量处理,将task放入队列,1分钟从queue中获取一次）
+        【PeerAwareInstanceRegistryImpl.replicateInstanceActionsToPeers()】
     
 自我保护机制
 ---
@@ -30,3 +32,5 @@ Eureka Server
 
     numberOfRenewsPerMinThreshold （每分钟最小续约数） = 客户端数*2
     serverConfig.getRenewalPercentThreshold():每分钟续约比例 默认0.85
+    
+学习文章mark： [https://www.jianshu.com/p/f720d3857830]
