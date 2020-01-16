@@ -100,8 +100,8 @@ class FeignClientsConfiguration{
 ---
 若@FeignClient没有设置url，则根据service-name负载
 
-FeignClientFactoryBean.target()--> Targeter(HystrixTargeter) 
---> ReflectiveFeign.newInstance()-->InvocationHandlerFactory.create()
+FeignClientFactoryBean.target()-> Targeter(HystrixTargeter) 
+-> ReflectiveFeign.newInstance()->InvocationHandlerFactory.create()
 
 
 ReflectiveFeign:用于生成动态代理类
@@ -155,13 +155,151 @@ class FeignClientFactoryBean{
 }
 ```   
 
-4.build
+4.请求执行
 ---
 Feign.build()
 
 SynchronousMethodHandler.Factory:接口方法的拦截器创建工厂
 SynchronousMethodHandler:接口方法的拦截器，真正拦截的核心，这里真正发起http请求，处理返回结果
 
+RequestInterceptor:在获取请求request对RequestTemplate进行操作(认证、请求头)
+Client：请求客户端(Default/LoadBalancerFeignClient)
+Options： 请求设置(连接超时时间、读取超时时间、是否允许重定向)
+
+```java
+class SynchronousMethodHandler{
+
+
+   @Override
+   public Object invoke(Object[] argv) throws Throwable {   
+     //通过动态代理执行                                             
+     //创建请求模板
+     RequestTemplate template = buildTemplateFromArgs.create(argv); 
+     //克隆重试对象,实现是new一个新的
+     Retryer retryer = this.retryer.clone();
+     while (true) {
+       try {
+          //执行请求并将放回参数解码
+         return executeAndDecode(template);
+       } catch (RetryableException e) {
+         try {
+           retryer.continueOrPropagate(e);
+         } catch (RetryableException th) {
+           Throwable cause = th.getCause();
+           if (propagationPolicy == UNWRAP && cause != null) {
+             throw cause;
+           } else {
+             throw th;
+           }
+         }
+         if (logLevel != Logger.Level.NONE) {
+           logger.logRetry(metadata.configKey(), logLevel);
+         }
+         continue;
+       }
+     }
+   }   
+  
+   Object executeAndDecode(RequestTemplate template) throws Throwable { 
+        //获取目标的请求对象，HardCodedTarget的apply方法
+        //并在生成Qequest前,执行RequestInterceptor的apply
+       Request request = targetRequest(template);
+   
+       if (logLevel != Logger.Level.NONE) {
+         logger.logRequest(metadata.configKey(), logLevel, request);
+       }
+   
+       Response response;
+       long start = System.nanoTime();
+       try {   
+          //执行请求
+         response = client.execute(request, options);
+       } catch (IOException e) {
+         if (logLevel != Logger.Level.NONE) {
+           logger.logIOException(metadata.configKey(), logLevel, e, elapsedTime(start));
+         }
+         throw errorExecuting(request, e);
+       }
+       long elapsedTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+   
+       boolean shouldClose = true;
+       try {
+         if (logLevel != Logger.Level.NONE) {
+           response =
+               logger.logAndRebufferResponse(metadata.configKey(), logLevel, response, elapsedTime);
+         }
+         if (Response.class == metadata.returnType()) {
+           if (response.body() == null) {
+             return response;
+           }
+           if (response.body().length() == null ||
+               response.body().length() > MAX_RESPONSE_BUFFER_SIZE) {
+             shouldClose = false;
+             return response;
+           }
+           // Ensure the response body is disconnected
+           byte[] bodyData = Util.toByteArray(response.body().asInputStream());
+           return response.toBuilder().body(bodyData).build();
+         }
+         if (response.status() >= 200 && response.status() < 300) {
+           if (void.class == metadata.returnType()) {
+             return null;
+           } else {
+             Object result = decode(response);
+             shouldClose = closeAfterDecode;
+             return result;
+           }
+         } else if (decode404 && response.status() == 404 && void.class != metadata.returnType()) {
+           Object result = decode(response);
+           shouldClose = closeAfterDecode;
+           return result;
+         } else {
+           throw errorDecoder.decode(metadata.configKey(), response);
+         }
+       } catch (IOException e) {
+         if (logLevel != Logger.Level.NONE) {
+           logger.logIOException(metadata.configKey(), logLevel, e, elapsedTime);
+         }
+         throw errorReading(request, response, e);
+       } finally {
+         if (shouldClose) {
+           ensureClosed(response.body());
+         }
+       }
+     }
+
+}
+```
+
+5.负载均衡(Ribbon)
+---
+LoadBalancerFeignClient
+
+```java
+class LoadBalancerFeignClient{  
+    @Override
+    	public Response execute(Request request, Request.Options options) throws IOException {
+    		try {
+    			URI asUri = URI.create(request.url());
+    			String clientName = asUri.getHost();
+    			URI uriWithoutHost = cleanUrl(request.url(), clientName);
+    			FeignLoadBalancer.RibbonRequest ribbonRequest = new FeignLoadBalancer.RibbonRequest(
+    					this.delegate, request, uriWithoutHost);
+    
+    			IClientConfig requestConfig = getClientConfig(options, clientName);
+    			return lbClient(clientName).executeWithLoadBalancer(ribbonRequest,
+    					requestConfig).toResponse();
+    		}
+    		catch (ClientException e) {
+    			IOException io = findIOException(e);
+    			if (io != null) {
+    				throw io;
+    			}
+    			throw new RuntimeException(e);
+    		}
+    	}
+}
+```
 
  
 
