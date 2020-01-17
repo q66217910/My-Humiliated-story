@@ -3,8 +3,9 @@ Feign
 
  1.FeignClientsRegistrar启动类
  --- 
- 实现 ImportBeanDefinitionRegistrar，spring启动时加载
- 配置顺序 clients->value  scan包下下所有配置@FeignClint的类（FeignClientFactoryBean ）并注入
+ 实现 ImportBeanDefinitionRegistrar，spring启动时加载<br>  
+ 1.注入相关的配置bean<br> 
+ 2.scan包下下所有配置@FeignClint的类（FeignClientFactoryBean）并注入
 ```java
 class FeignClientsRegistrar{   
 
@@ -159,12 +160,12 @@ class FeignClientFactoryBean{
 ---
 Feign.build()
 
-SynchronousMethodHandler.Factory:接口方法的拦截器创建工厂
-SynchronousMethodHandler:接口方法的拦截器，真正拦截的核心，这里真正发起http请求，处理返回结果
+SynchronousMethodHandler.Factory:接口方法的拦截器创建工厂<br>
+SynchronousMethodHandler:接口方法的拦截器，真正拦截的核心，这里真正发起http请求，处理返回结果<br>
 
-RequestInterceptor:在获取请求request对RequestTemplate进行操作(认证、请求头)
-Client：请求客户端(Default/LoadBalancerFeignClient)
-Options： 请求设置(连接超时时间、读取超时时间、是否允许重定向)
+RequestInterceptor:在获取请求request对RequestTemplate进行操作(认证、请求头) <br>
+Client：请求客户端(Default/LoadBalancerFeignClient) <br>
+Options： 请求设置(连接超时时间、读取超时时间、是否允许重定向) <br>
 
 ```java
 class SynchronousMethodHandler{
