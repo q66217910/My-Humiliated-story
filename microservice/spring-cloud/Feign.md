@@ -167,6 +167,32 @@ RequestInterceptor:在获取请求request对RequestTemplate进行操作(认证�
 Client：请求客户端(Default/LoadBalancerFeignClient) <br>
 Options： 请求设置(连接超时时间、读取超时时间、是否允许重定向) <br>
 
+FeignInvocationHandler:默认动态代理Feign请求
+```java
+class FeignInvocationHandler{
+    
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+          if ("equals".equals(method.getName())) {
+            try {
+              Object otherHandler =
+                  args.length > 0 && args[0] != null ? Proxy.getInvocationHandler(args[0]) : null;
+              return equals(otherHandler);
+            } catch (IllegalArgumentException e) {
+              return false;
+            }
+          } else if ("hashCode".equals(method.getName())) {
+            return hashCode();
+          } else if ("toString".equals(method.getName())) {
+            return toString();
+          }
+    
+          return dispatch.get(method).invoke(args);
+        }
+
+}
+```
+
 ```java
 class SynchronousMethodHandler{
 
@@ -301,6 +327,41 @@ class LoadBalancerFeignClient{
     	}
 }
 ```
+6.服务熔断与降级(Hystrix)
+---
+HystrixTargeter
 
+```java
+class HystrixTargeter{  
+
+    @Override
+ 	public <T> T target(FeignClientFactoryBean factory, Feign.Builder feign, FeignContext context,
+ 						Target.HardCodedTarget<T> target) {  
+        //没有配置开启Hystrix使用默认的Feign
+ 		if (!(feign instanceof feign.hystrix.HystrixFeign.Builder)) {
+ 			return feign.target(target);
+ 		}
+ 		feign.hystrix.HystrixFeign.Builder builder = (feign.hystrix.HystrixFeign.Builder) feign;
+ 		SetterFactory setterFactory = getOptional(factory.getName(), context,
+ 			SetterFactory.class);
+ 		if (setterFactory != null) {
+ 			builder.setterFactory(setterFactory);
+ 		}
+ 		Class<?> fallback = factory.getFallback(); 
+        //获取方法单独的fallback
+ 		if (fallback != void.class) {
+ 			return targetWithFallback(factory.getName(), context, target, builder, fallback);
+ 		}     
+        //获取方法的fallbackFactory
+ 		Class<?> fallbackFactory = factory.getFallbackFactory();
+ 		if (fallbackFactory != void.class) {
+ 			return targetWithFallbackFactory(factory.getName(), context, target, builder, fallbackFactory);
+ 		}
+ 
+ 		return feign.target(target);
+ 	}
+
+}
+```
  
 
