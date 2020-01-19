@@ -78,7 +78,8 @@ class HystrixFeign{
 
 }
 ```  
- HystrixInvocationHandler动态代理了Feign的请求方法
+ HystrixInvocationHandler动态代理了Feign的请求方法 ,前部分与FeignInvocationHandler没有区别,
+ 后面动态代理部门,使用了HystrixCommand,HystrixCommand里维护了一个线程池。
  ```java
  class  HystrixInvocationHandler{
   @Override
@@ -162,5 +163,101 @@ class HystrixFeign{
   } 
 }
 ```
+2.Hystrix配置
+```java
+@ConfigurationProperties("hystrix.metrics")
+class HystrixMetricsProperties{
+   private boolean enabled = true;//是否启动指标轮询,默认开启 
+   private Integer pollingIntervalMs = 2000;//轮询的间隔时间
+}  
 
+class HystrixCommandProperties{   
+    //
+    private final HystrixProperty<Integer> circuitBreakerRequestVolumeThreshold; 
+    //熔断后多少毫秒允许重试,5000ms
+    private final HystrixProperty<Integer> circuitBreakerSleepWindowInMilliseconds; 
+    //是否开启断路器，true
+    private final HystrixProperty<Boolean> circuitBreakerEnabled;                 
+    //断路器阈值百分比，50%
+    private final HystrixProperty<Integer> circuitBreakerErrorThresholdPercentage;
+    //强制打开断路器，false
+    private final HystrixProperty<Boolean> circuitBreakerForceOpen;  
+    //强制关闭断路器，即允许所有的错误,false
+    private final HystrixProperty<Boolean> circuitBreakerForceClosed; 
+    //HystrixCommand是否在单线程执行，ExecutionIsolationStrategy.THREAD(THREAD/SEMAPHORE)
+    private final HystrixProperty<ExecutionIsolationStrategy> executionIsolationStrategy;
+    //命令超时毫秒数,1000ms 
+    private final HystrixProperty<Integer> executionTimeoutInMilliseconds;
+    //是否启用命令超时，true 
+    private final HystrixProperty<Boolean> executionTimeoutEnabled;     
+    //Command运行在哪个线程池（当ExecutionIsolationStrategy.THREAD时）, null
+    private final HystrixProperty<String> executionIsolationThreadPoolKeyOverride; 
+    //信号量的允许数量(当ExecutionIsolationStrategy.SEMAPHORE),10
+    private final HystrixProperty<Integer> executionIsolationSemaphoreMaxConcurrentRequests;
+    //后备信号量数量,10
+    private final HystrixProperty<Integer> fallbackIsolationSemaphoreMaxConcurrentRequests;
+    //是否允许降级，true
+    private final HystrixProperty<Boolean> fallbackEnabled;  
+    //执行隔离线程超时中断，true (ExecutionIsolationStrategy.THREAD)
+    private final HystrixProperty<Boolean> executionIsolationThreadInterruptOnTimeout;    
+    //执行隔离线程取消时中断 , false
+    private final HystrixProperty<Boolean> executionIsolationThreadInterruptOnFutureCancel;
+    //监控指标刷新的毫秒数，
+    private final HystrixProperty<Integer> metricsRollingStatisticalWindowInMilliseconds; 
+    //监控指标刷新的存储童数，10
+    private final HystrixProperty<Integer> metricsRollingStatisticalWindowBuckets; 
+    //是否启用监控，true
+    private final HystrixProperty<Boolean> metricsRollingPercentileEnabled;  
+    //  监控指标刷新的百分比
+    private final HystrixProperty<Integer> metricsRollingPercentileWindowInMilliseconds;
+}
+```
+
+3.Hystrix执行
+---
+HystrixCommand
+
+threadPool:Hystrix线程池,有个ConcurrentHashMap<String, HystrixThreadPool>保存
+threadPoolKey:
+```java
+class  HystrixCommand extends AbstractCommand<R> 
+        implements HystrixExecutable<R>, HystrixInvokableInfo<R>, HystrixObservable<R>{
+           
+    //HystrixCommand构造方法
+    protected HystrixCommand(Setter setter) {
+        this(setter.groupKey, setter.commandKey, setter.threadPoolKey, null, null, setter.commandPropertiesDefaults, setter.threadPoolPropertiesDefaults, null, null, null, null, null);
+    }
+         
+    //实际调用了父类的构造方法
+    protected AbstractCommand(HystrixCommandGroupKey group, HystrixCommandKey key, HystrixThreadPoolKey threadPoolKey, HystrixCircuitBreaker circuitBreaker, HystrixThreadPool threadPool,
+                HystrixCommandProperties.Setter commandPropertiesDefaults, HystrixThreadPoolProperties.Setter threadPoolPropertiesDefaults,
+                HystrixCommandMetrics metrics, TryableSemaphore fallbackSemaphore, TryableSemaphore executionSemaphore,
+                HystrixPropertiesStrategy propertiesStrategy, HystrixCommandExecutionHook executionHook) {
+    
+            this.commandGroup = initGroupKey(group);
+            this.commandKey = initCommandKey(key, getClass());
+            this.properties = initCommandProperties(this.commandKey, propertiesStrategy, commandPropertiesDefaults);
+            this.threadPoolKey = initThreadPoolKey(threadPoolKey, this.commandGroup, this.properties.executionIsolationThreadPoolKeyOverride().get());
+            this.metrics = initMetrics(metrics, this.commandGroup, this.threadPoolKey, this.commandKey, this.properties);
+            this.circuitBreaker = initCircuitBreaker(this.properties.circuitBreakerEnabled().get(), circuitBreaker, this.commandGroup, this.commandKey, this.properties, this.metrics);
+            this.threadPool = initThreadPool(threadPool, this.threadPoolKey, threadPoolPropertiesDefaults);
+    
+            //Strategies from plugins
+            this.eventNotifier = HystrixPlugins.getInstance().getEventNotifier();
+            this.concurrencyStrategy = HystrixPlugins.getInstance().getConcurrencyStrategy();
+            HystrixMetricsPublisherFactory.createOrRetrievePublisherForCommand(this.commandKey, this.commandGroup, this.metrics, this.circuitBreaker, this.properties);
+            this.executionHook = initExecutionHook(executionHook);
+    
+            this.requestCache = HystrixRequestCache.getInstance(this.commandKey, this.concurrencyStrategy);
+            this.currentRequestLog = initRequestLog(this.properties.requestLogEnabled().get(), this.concurrencyStrategy);
+    
+            /* fallback semaphore override if applicable */
+            this.fallbackSemaphoreOverride = fallbackSemaphore;
+    
+            /* execution semaphore override if applicable */
+            this.executionSemaphoreOverride = executionSemaphore;
+        }    
+    
+}
+```
 
