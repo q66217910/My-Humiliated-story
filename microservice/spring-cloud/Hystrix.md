@@ -259,5 +259,101 @@ class  HystrixCommand extends AbstractCommand<R>
         }    
     
 }
+```  
+
+HystrixCommand执行，execute()方法，queue()方法在，从队列中获取并异步执行，返回一个Future，
+并get阻塞获取。Hystrix内使用了rxjava。
+```java
+class HystrixCommand{ 
+
+    public R execute() {
+         try {
+             return queue().get();
+         } catch (Exception e) {
+             throw Exceptions.sneakyThrow(decomposeException(e));
+         }
+     } 
+
+    public Future<R> queue() {
+                           
+            //阻塞获取结果
+            final Future<R> delegate = toObservable().toBlocking().toFuture();
+        	
+            final Future<R> f = new Future<R>() {
+    
+                @Override
+                public boolean cancel(boolean mayInterruptIfRunning) {
+                    if (delegate.isCancelled()) {
+                        return false;
+                    }
+    
+                    if (HystrixCommand.this.getProperties().executionIsolationThreadInterruptOnFutureCancel().get()) {
+        
+                        interruptOnFutureCancel.compareAndSet(false, mayInterruptIfRunning);
+            		}
+    
+                    final boolean res = delegate.cancel(interruptOnFutureCancel.get());
+    
+                    if (!isExecutionComplete() && interruptOnFutureCancel.get()) {
+                        final Thread t = executionThread.get();
+                        if (t != null && !t.equals(Thread.currentThread())) {
+                            t.interrupt();
+                        }
+                    }
+    
+                    return res;
+    			}
+    
+                @Override
+                public boolean isCancelled() {
+                    return delegate.isCancelled();
+    			}
+    
+                @Override
+                public boolean isDone() {
+                    return delegate.isDone();
+    			}
+    
+                @Override
+                public R get() throws InterruptedException, ExecutionException {
+                    return delegate.get();
+                }
+    
+                @Override
+                public R get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
+                    return delegate.get(timeout, unit);
+                }
+            	
+            };
+    
+            //成功返回返回值，失败则异常处理
+            if (f.isDone()) {
+                try {
+                    f.get();
+                    return f;
+                } catch (Exception e) {
+                    Throwable t = decomposeException(e);
+                    if (t instanceof HystrixBadRequestException) {
+                        return f;
+                    } else if (t instanceof HystrixRuntimeException) {
+                        HystrixRuntimeException hre = (HystrixRuntimeException) t;
+                        switch (hre.getFailureType()) {
+    					case COMMAND_EXCEPTION:
+    					case TIMEOUT:
+    						// we don't throw these types from queue() only from queue().get() as they are execution errors
+    						return f;
+    					default:
+    						// these are errors we throw from queue() as they as rejection type errors
+    						throw hre;
+    					}
+                    } else {
+                        throw Exceptions.sneakyThrow(t);
+                    }
+                }
+            }
+    
+            return f;
+        }
+} 
 ```
 
