@@ -362,6 +362,7 @@ Command执行状态:  NOT_STARTED(没有开始)/OBSERVABLE_CHAIN_CREATED(创建�
 
 Command执行过程:
 1.NOT_STARTED->OBSERVABLE_CHAIN_CREATED:开始创建调用链
+2.(requestLogEnabled控制是否开启请求日志)、(requestCacheEnabled是否开启缓存)
 ```java
 class AbstractCommand{
    public Observable<R> toObservable() {
@@ -413,10 +414,12 @@ class AbstractCommand{
                    }
                }
            };
-   
+                
+           //调用链开始
            final Func0<Observable<R>> applyHystrixSemantics = new Func0<Observable<R>>() {
                @Override
-               public Observable<R> call() {
+               public Observable<R> call() {  
+                   //若状态为不订阅，则不执行
                    if (commandState.get().equals(CommandState.UNSUBSCRIBED)) {
                        return Observable.never();
                    }
@@ -461,7 +464,6 @@ class AbstractCommand{
                    //判断是否是NOT_STARTED,是的话更新为OBSERVABLE_CHAIN_CREATED，并开始创建调用链
                    if (!commandState.compareAndSet(CommandState.NOT_STARTED, CommandState.OBSERVABLE_CHAIN_CREATED)) {
                        IllegalStateException ex = new IllegalStateException("This instance can only be executed once. Please instantiate a new instance.");
-                       //TODO make a new error type for this
                        throw new HystrixRuntimeException(FailureType.BAD_REQUEST_EXCEPTION, _cmd.getClass(), getLogMessagePrefix() + " command executed multiple times - this is not permitted.", ex, null);
                    }
    
