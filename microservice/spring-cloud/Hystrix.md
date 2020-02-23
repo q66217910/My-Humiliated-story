@@ -362,7 +362,16 @@ Command执行状态:  NOT_STARTED(没有开始)/OBSERVABLE_CHAIN_CREATED(创建�
 
 Command执行过程:
 1.NOT_STARTED->OBSERVABLE_CHAIN_CREATED:开始创建调用链
+
 2.(requestLogEnabled控制是否开启请求日志)、(requestCacheEnabled是否开启缓存)
+
+3.若没有缓存,  调用链添加applyHystrixSemantics(真正进行熔断)
+
+4.applyHystrixSemantics执行，判断是否开启熔断，若开启则直接执行失败回调。
+
+5.尝试获取信号量，若没有获取到，也执行失败逻辑。若超时、取消订阅，重置信号量。
+
+6。
 ```java
 class AbstractCommand{
    public Observable<R> toObservable() {
@@ -518,7 +527,55 @@ class AbstractCommand{
                            .doOnCompleted(fireOnCompletedHook);
                }
            });
-       }
+       }  
+
+       private Observable<R> applyHystrixSemantics(final AbstractCommand<R> _cmd) {
+                // mark that we're starting execution on the ExecutionHook
+                // if this hook throws an exception, then a fast-fail occurs with no fallback.  No state is left inconsistent
+                executionHook.onStart(_cmd);
+        
+                //判断是否开启熔断
+                if (circuitBreaker.allowRequest()) {   
+                    //获取信号量实例
+                    final TryableSemaphore executionSemaphore = getExecutionSemaphore();
+                    final AtomicBoolean semaphoreHasBeenReleased = new AtomicBoolean(false);
+                    final Action0 singleSemaphoreRelease = new Action0() {
+                        @Override
+                        public void call() {
+                            if (semaphoreHasBeenReleased.compareAndSet(false, true)) {
+                                executionSemaphore.release();
+                            }
+                        }
+                    };
+        
+                    final Action1<Throwable> markExceptionThrown = new Action1<Throwable>() {
+                        @Override
+                        public void call(Throwable t) {
+                            eventNotifier.markEvent(HystrixEventType.EXCEPTION_THROWN, commandKey);
+                        }
+                    };
+        
+                    if (executionSemaphore.tryAcquire()) {
+                        try {
+                            /* used to track userThreadExecutionTime */
+                            executionResult = executionResult.setInvocationStartTime(System.currentTimeMillis());
+                            return executeCommandAndObserve(_cmd)   
+                                     //错误逻辑
+                                    .doOnError(markExceptionThrown) 
+                                     //超时
+                                    .doOnTerminate(singleSemaphoreRelease)  
+                                    //取消订阅
+                                    .doOnUnsubscribe(singleSemaphoreRelease);
+                        } catch (RuntimeException e) {
+                            return Observable.error(e);
+                        }
+                    } else {
+                        return handleSemaphoreRejectionViaFallback();
+                    }
+                } else {
+                    return handleShortCircuitViaFallback();
+                }
+            }
 }
 ```
 
