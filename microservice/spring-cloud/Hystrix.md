@@ -370,8 +370,9 @@ Command执行过程:
 4.applyHystrixSemantics执行，判断是否开启熔断，若开启则直接执行失败回调。
 
 5.尝试获取信号量，若没有获取到，也执行失败逻辑。若超时、取消订阅，重置信号量。
+每个Command都有信号量用来限制并发fallback，信号量次数默认10.
 
-6。
+6.executeCommandAndObserve->construct() ,执行请求
 ```java
 class AbstractCommand{
    public Observable<R> toObservable() {
@@ -577,5 +578,7 @@ class AbstractCommand{
                 }
             }
 }
-```
+``` 
+
+
 
