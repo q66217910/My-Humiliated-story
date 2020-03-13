@@ -13,7 +13,8 @@ ConcurrentHashMap
         hash = (h ^ (h >>> 16)) & HASH_BITS; = -1 ：扩容
         
 
-#负载因子与表的容量
+负载因子与表的容量
+---
 在ConcurrentHashMap中，负载因子默认为0.75.[sizeCtl = n - (n >>> 2)].
 
 sizeCtl用与控制表的初始化与扩容
@@ -31,7 +32,7 @@ sizeCtl用与控制表的初始化与扩容
     //用于表的初始化和扩容
     private transient volatile int sizeCtl;
                            
-    //得出2的幂次，把最高为的1右移到每一位上,然后+1，得到的便是2的幂次
+    //得出2的幂次，把最高为的1右移到每一位上,使得最高位右边全是1,然后+1，得到的便是2的幂次
     private static final int tableSizeFor(int c) {
         int n = c - 1;
         n |= n >>> 1;
@@ -44,7 +45,8 @@ sizeCtl用与控制表的初始化与扩容
 }
 ```   
 
-#表的初始化
+表的初始化
+---
 当table为null或者table.size时初始化
 ```java
 class ConcurrentHashMap{  
@@ -80,5 +82,53 @@ class ConcurrentHashMap{
        }
        return tab;
    }
+}
+```    
+
+#表的扩容
+当s(总数)> =sizeCtl时进行扩容
+```java
+class ConcurrentHashMap{
+    
+    //check为binCount，
+    private final void addCount(long x, int check) {
+        if (check >= 0) {
+            Node<K,V>[] tab, nt; int n, sc;
+            while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
+                   (n = tab.length) < MAXIMUM_CAPACITY) {
+                int rs = resizeStamp(n);
+                if (sc < 0) {
+                    if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
+                        sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
+                        transferIndex <= 0)
+                        break;
+                    if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+                        transfer(tab, nt);
+                }
+                else if (U.compareAndSwapInt(this, SIZECTL, sc,
+                                             (rs << RESIZE_STAMP_SHIFT) + 2))
+                    transfer(tab, null);
+                s = sumCount();
+            }
+        }
+    }         
+
+    static final int resizeStamp(int n) {
+        return Integer.numberOfLeadingZeros(n) | (1 << (RESIZE_STAMP_BITS - 1));
+    }       
+    
+    public static int numberOfLeadingZeros(int i) {
+        // HD, Figure 5-6
+        if (i == 0)
+            return 32;
+        int n = 1;
+        if (i >>> 16 == 0) { n += 16; i <<= 16; }
+        if (i >>> 24 == 0) { n +=  8; i <<=  8; }
+        if (i >>> 28 == 0) { n +=  4; i <<=  4; }
+        if (i >>> 30 == 0) { n +=  2; i <<=  2; }
+        n -= i >>> 31;
+        return n;
+    }
+
 }
 ```
