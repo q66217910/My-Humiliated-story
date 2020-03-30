@@ -19,8 +19,8 @@ ConcurrentHashMap
  sizeCtl用与控制表的初始化与扩容:
 
       0:初始值
-      -1: 表在初               
-      -N: 扩容 （N-1）个活跃线程
+     -1: 表在初               
+     -N: 扩容 （N-1）个活跃线程
       N: 表容量*负载因子（需要扩容的值） 
 ```java
  class ConcurrentHashMap{
