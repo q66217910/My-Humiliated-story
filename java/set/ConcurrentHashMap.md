@@ -2,28 +2,26 @@ ConcurrentHashMap
 ===
 1.7:
 ---
-    Segment:存放数据时首先需要定位到具体的 Segment 中 (
+    Segment:存放数据时首先需要定位到具体的 Segment 中 
     
 
 1.8:
 ---
- CAS + synchronized |h >>> 16)) & HASH_BITS; = -1 ：扩容
+ CAS + synchronized (数组+链表+红黑数的数据结构)
 
+ 负载因子与表的容量:
+                     
+     在ConcurrentHashMap中，负载因子默认为0.75.[sizeCtl = n - (n >>> 2)]. 
+        注: 负载因子为什么是0.75? 
+               一.降低hash的冲突 (查询时间)
+               二.防止哈希表过大,占用过多内存。 (占用内存空间)                                                  
 
-                     负载因子与表的容量
-                     ---
-                     在ConcurrentHashMap中，负载因子默认为0.75.[sizeCtl = n - (n >>> 2)].
+ sizeCtl用与控制表的初始化与扩容:
 
-                     sizeCtl用与控制表的初始化与扩容
-
-                            0:初始值
-                            -1: 表在初  数组+链表+红黑数的数据结构
- 
-        initTable : 初始化table数组
-        hash = (h ^ (始化
-       -N: 扩容 （N-1）个活跃线程 
-       N : 表容量*负载因子（需要扩容的值） 
-       初始化： 初始化时 为 table的容量
+      0:初始值
+      -1: 表在初               
+      -N: 扩容 （N-1）个活跃线程
+      N: 表容量*负载因子（需要扩容的值） 
 ```java
  class ConcurrentHashMap{
         
@@ -56,7 +54,7 @@ class ConcurrentHashMap{
    private final Node<K,V>[] initTable() {
        Node<K,V>[] tab; int sc;
        while ((tab = table) == null || tab.length == 0) {  
-           // sizeCtl<0 说明已经有其他
+           // sizeCtl<0 说明已经有其他的线程在进行初始化
            if ((sc = sizeCtl) < 0)   
                //让出cpu，使得当前wihle空旋，等待其他线程初始化table
                Thread.yield(); 
