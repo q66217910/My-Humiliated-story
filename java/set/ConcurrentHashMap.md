@@ -18,10 +18,9 @@ ConcurrentHashMap
 
  sizeCtl用与控制表的初始化与扩容:
 
-      0:初始值
-     -1: 表在初               
-     -N: 扩容 （N-1）个活跃线程
-      N: 表容量*负载因子（需要扩容的值） 
+     -1: 表在初始化            
+     -N: 扩容中, （最低位-1）个活跃线程
+      N: 表容量*负载因子（达到该值需要扩容） 
 ```java
  class ConcurrentHashMap{
         
@@ -30,7 +29,7 @@ ConcurrentHashMap
     //用于表的初始化和扩容
     private transient volatile int sizeCtl;
                            
-    //得出2的幂次，把最高为的1右移到每一位上,使得最高位右边全是1,然后+1，得到的便是2的幂次
+    //得出2的幂次，  把最高为的1右移到每一位上,使得最高位右边全是1,然后+1，得到的便是2的幂次
     private static final int tableSizeFor(int c) {
         int n = c - 1;
         n |= n >>> 1;
@@ -45,7 +44,7 @@ ConcurrentHashMap
 
 表的初始化
 -----
-当table为null或者table.size时初始化
+当table为null或者table.size为0时初始化
 ```java
 class ConcurrentHashMap{  
 
@@ -61,14 +60,14 @@ class ConcurrentHashMap{
            //若table还没初始化，将SIZECTL设置为-1，表明正在初始化
            else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
                try {
+                   //在做一次判断,防止重复扩容
                    if ((tab = table) == null || tab.length == 0) { 
                        //设置默认容量16
                        int n = (sc > 0) ? sc : DEFAULT_CAPACITY;
-                       @SuppressWarnings("unchecked")  
                        //初始化table
                        Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
                        table = tab = nt;
-                       //需要扩容的值 表容量*负载因子
+                       //计算需要扩容的值 表容量*负载因子 0.75
                        sc = n - (n >>> 2);
                    }
                } finally { 
@@ -83,12 +82,16 @@ class ConcurrentHashMap{
 }
 ```    
 
-#表的扩容
+表的扩容
+====
 1.当s(总数)> =sizeCtl时进行扩容
 
-2.resizeStamp:最高位为1，低位为table的最高位
+2.如果sizeCtl不小于0，则说明初次扩容
 
-3.如果sizeCtl不小于0，则说明初次扩容
+binCount:
+
+    binCount<0: 不需要扩容
+    0<binCount<=1: 只需要检查是否有锁的竞争
 ```java
 class ConcurrentHashMap{
                         
@@ -99,24 +102,28 @@ class ConcurrentHashMap{
 
     private static final int RESIZE_STAMP_SHIFT = 32 - RESIZE_STAMP_BITS;
 
-    //check为binCount，
+    //check为binCount
     private final void addCount(long x, int check) {
         if (check >= 0) {
             Node<K,V>[] tab, nt; int n, sc;  
             //当s(总数)> =sizeCtl时进行扩容
             while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
                    (n = tab.length) < MAXIMUM_CAPACITY) {    
-                //n,为2的幂次
+                //低位为从高位开始到第一个非0时的个数,例如n=16,rs的低位为27（011011）
                 int rs = resizeStamp(n);
+                // sizeCtl为负数,代表正在扩容
                 if (sc < 0) {
+                    //
                     if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
                         sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
                         transferIndex <= 0)
                         break;
+                    //若sizeCtl的值相同,则可以多线程扩容,并将sc+1
                     if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
                         transfer(tab, nt);
                 }    
                 // 如果是sc为正数，上CAS锁，开始扩容，设置 sc的值
+                // sc的值为 resizeStamp的值+2
                 else if (U.compareAndSwapInt(this, SIZECTL, sc,
                                              (rs << RESIZE_STAMP_SHIFT) + 2))   
                     //开始扩容
@@ -126,7 +133,7 @@ class ConcurrentHashMap{
         }
     }         
           
-    //高位为15位1，低位为0的个数
+    //第16位为1,低位可看作存储n （16位为1是因为在<<16后能将sc变成负值）
     static final int resizeStamp(int n) {
         return Integer.numberOfLeadingZeros(n) | (1 << (RESIZE_STAMP_BITS - 1));
     }       
@@ -147,3 +154,40 @@ class ConcurrentHashMap{
 
 }
 ```
+
+开始扩容
+----
+将原表的数据迁移到新表
+```java
+class ConcurrentHashMap{
+    
+    private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
+        int n = tab.length, stride;
+        //stride ,计算每个cpu需要迁移桶的数量
+        if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
+            //默认16个
+            stride = MIN_TRANSFER_STRIDE;
+        //创建新的表,若是协助扩容的线程，则不需要创建
+        if (nextTab == null) {           
+            try {
+                //扩容一倍
+                Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];
+                nextTab = nt;
+            } catch (Throwable ex) {     
+                //扩容失败，可能是内存溢出，将sizeCtl设置成最大值，使ConcurrentHashMap不再扩容
+                sizeCtl = Integer.MAX_VALUE;
+                return;
+            }
+            nextTable = nextTab;
+            //扩容时下个表的索引
+            transferIndex = n;
+            ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
+            boolean advance = true;
+            boolean finishing = false;
+        }
+    }
+}
+```
+
+数据结构
+----
