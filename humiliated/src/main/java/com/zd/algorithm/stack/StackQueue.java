@@ -54,6 +54,10 @@ public class StackQueue<T> {
         }
     }
 
+    public boolean empty() {
+        return this.stackOut.empty() && this.stackIn.empty();
+    }
+
     public static void main(String[] args) {
         StackQueue<Integer> queue = new StackQueue<>();
         queue.add(1);

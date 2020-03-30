@@ -1,14 +1,11 @@
 package com.zd.algorithm.stack;
 
-import lombok.Data;
-
 import java.util.Stack;
 
 /**
  * getMin 功能的栈
  */
-@Data
-public class GetMin {
+public class MinStack {
 
     /**
      * 正常栈
@@ -21,7 +18,7 @@ public class GetMin {
     private Stack<Integer> stackMin;
 
 
-    private GetMin() {
+    private MinStack() {
         stackData = new Stack<>();
         stackMin = new Stack<>();
     }
@@ -53,8 +50,12 @@ public class GetMin {
         return this.stackMin.peek();
     }
 
+    public int top(){
+        return stackData.peek();
+    }
+
     public static void main(String[] args) {
-        GetMin getMin = new GetMin();
+        MinStack getMin = new MinStack();
         getMin.push(3);
         System.out.println(getMin.getMin());
         getMin.push(1);
