@@ -9,7 +9,70 @@ ConcurrentHashMap
 ---
  CAS + synchronized (数组+链表+红黑数的数据结构)
 
- 负载因子与表的容量:
+Hash算法
+------
+
+    1.为什么要高16位与低16位异或:
+        作用:可以将高低位的二进制特征混合,并且可以减少hash碰撞(hash碰撞指的是两个不同的值经过hash后得到的值相同)
+            在HashMap中,使用的链地址法(同样hash值的存在同一个table节点)。
+        (n - 1) & h: n为table的大小, (n-1)&h 保证了最终结果会落在table大小中.在这，若h不进行^操作，则只与低位&,
+             那只要低位相同则hash就会落在同一个节点,若(h ^ (h >>> 16))后,h中包含了低位与高位的信息,需要他们高位和
+             低位都相同才会落在同一个table节点,以此来减少hash碰撞。             
+
+
+```java
+class  ConcurrentHashMap{
+    
+    Class<?> ak = Node[].class;
+    
+    //arrayIndexScale获取Node[]的增量地址
+    private static final int ASHIFT = 31 - Integer.numberOfLeadingZeros(U.arrayIndexScale(ak));
+    
+    //获取Node[]第一个元素的偏移地址
+    private static final long ABASE = U.arrayBaseOffset(ak);
+    
+    //int最大值为(1111...1111)
+    static final int HASH_BITS = 0x7fffffff;
+    
+    //用高16位与低16位异或
+    static final int spread(int h) {
+        return (h ^ (h >>> 16)) & HASH_BITS;
+    }
+    
+    //获取table在这hash的节点
+    static final <K,V> Node<K,V> tabAt(Node<K,V>[] tab, int i) {
+        return (Node<K,V>)U.getObjectVolatile(tab, ((long)i << ASHIFT) + ABASE);
+    }
+    
+    //get方法
+    public V get(Object key) {
+        Node<K,V>[] tab; Node<K,V> e, p; int n, eh; K ek;
+        //高位与低位异或
+        int h = (key.hashCode());
+        //(n - 1) & h [n为2的幂次,所以n-1为000...1..,  &h则是取h低n位的值]
+        if ((tab = table) != null && (n = tab.length) > 0 &&
+            (e = tabAt(tab, (n - 1) & h)) != null) {
+            if ((eh = e.hash) == h) {
+                if ((ek = e.key) == key || (ek != null && key.equals(ek)))
+                    return e.val;
+            }
+            else if (eh < 0)
+                return (p = e.find(h, key)) != null ? p.val : null;
+            while ((e = e.next) != null) {
+                if (e.hash == h &&
+                    ((ek = e.key) == key || (ek != null && key.equals(ek))))
+                    return e.val;
+            }
+        }
+        return null;
+    }
+    
+}
+```
+
+
+负载因子与表的容量:
+----------
                      
      在ConcurrentHashMap中，负载因子默认为0.75.[sizeCtl = n - (n >>> 2)]. 
         注: 负载因子为什么是0.75? 
