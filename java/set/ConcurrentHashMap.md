@@ -25,7 +25,11 @@ class  ConcurrentHashMap{
     
     Class<?> ak = Node[].class;
     
-    //arrayIndexScale获取Node[]的增量地址
+    //arrayIndexScale获取Node[]中一个元素的大小, ASHIFT即为（31-前置0的个数）剩下的就是, 每一个元素的占用的位数
+    //U.arrayIndexScale(ak)这个是数组每一格的指针占用位数
+    //Integer.numberOfLeadingZeros(U.arrayIndexScale(ak)) 这个是占用位数用二进制表示的前导0个数
+    //31 - Integer.numberOfLeadingZeros(U.arrayIndexScale(ak)) 这个是占用位数用二进制表示的长度
+    //类似Array.getLength(Object array)方法
     private static final int ASHIFT = 31 - Integer.numberOfLeadingZeros(U.arrayIndexScale(ak));
     
     //获取Node[]第一个元素的偏移地址
@@ -39,7 +43,8 @@ class  ConcurrentHashMap{
         return (h ^ (h >>> 16)) & HASH_BITS;
     }
     
-    //获取table在这hash的节点
+    //获取table在这hash位置的节点，ASHIFT每个节点的占用字节数,
+    // offset(ABASE) + scale * Array.getLength(array) (scale * i 等于i << ASHIFT等于 i*2^scale)
     static final <K,V> Node<K,V> tabAt(Node<K,V>[] tab, int i) {
         return (Node<K,V>)U.getObjectVolatile(tab, ((long)i << ASHIFT) + ABASE);
     }
