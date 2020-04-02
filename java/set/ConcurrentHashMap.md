@@ -45,8 +45,18 @@ class  ConcurrentHashMap{
     
     //获取table在这hash位置的节点，ASHIFT每个节点的占用字节数,
     // offset(ABASE) + scale * Array.getLength(array) (scale * i 等于i << ASHIFT等于 i*2^scale)
+    //其实就是i*指针大小,若指针大小为64则，i*64=i<<8
     static final <K,V> Node<K,V> tabAt(Node<K,V>[] tab, int i) {
         return (Node<K,V>)U.getObjectVolatile(tab, ((long)i << ASHIFT) + ABASE);
+    }
+    
+    static final <K,V> boolean casTabAt(Node<K,V>[] tab, int i,
+                                        Node<K,V> c, Node<K,V> v) {
+        return U.compareAndSwapObject(tab, ((long)i << ASHIFT) + ABASE, c, v);
+    }
+    
+    static final <K,V> void setTabAt(Node<K,V>[] tab, int i, Node<K,V> v) {
+        U.putObjectVolatile(tab, ((long)i << ASHIFT) + ABASE, v);
     }
     
     //get方法
@@ -57,12 +67,15 @@ class  ConcurrentHashMap{
         //(n - 1) & h [n为2的幂次,所以n-1为000...1..,  &h则是取h低n位的值]
         if ((tab = table) != null && (n = tab.length) > 0 &&
             (e = tabAt(tab, (n - 1) & h)) != null) {
+            //hash和取出节点相同,则就是当前的值
             if ((eh = e.hash) == h) {
                 if ((ek = e.key) == key || (ek != null && key.equals(ek)))
                     return e.val;
             }
+            //hash结构小于0,为红黑树
             else if (eh < 0)
                 return (p = e.find(h, key)) != null ? p.val : null;
+            //hash值不同,但不为负,说明是链表
             while ((e = e.next) != null) {
                 if (e.hash == h &&
                     ((ek = e.key) == key || (ek != null && key.equals(ek))))
@@ -71,10 +84,24 @@ class  ConcurrentHashMap{
         }
         return null;
     }
-    
 }
 ```
 
+数据结构
+----
+ ConcurrentHashMap中一共两种数据结构:链表、红黑树
+
+    链表:当节点数量小于8时
+    红黑树: 当节点数量大于8时会由链表转红黑树,数量小于6会由红黑树转为链表
+    注: 为什么是8和6？
+        因为红黑树的查询时间复杂度是O(log(n))、链表的平均时间复杂度为O(n/2),长度为8时,log8=3，n/2=4,红黑树更快.
+        而在6转回链表,是为了在链表和红黑树之间转换过于频繁。        
+
+```java
+class ConcurrentHashMap{
+    
+}
+```
 
 负载因子与表的容量:
 ----------

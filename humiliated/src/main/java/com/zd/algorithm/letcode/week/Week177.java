@@ -7,14 +7,12 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.Calendar;
-import java.util.Date;
-import java.util.Locale;
+import java.util.*;
 
 public class Week177 {
 
     public static void main(String[] args) {
-        System.out.println(daysBetweenDates("2019-06-29", "2019-06-30"));
+        System.out.println(new Week177().gameOfLife(new int[][]{{0, 1, 0}, {0, 0, 1}, {1, 1, 1}, {0, 0, 0}}));
     }
 
     public static int daysBetweenDates(String date1, String date2) {
@@ -92,5 +90,43 @@ public class Week177 {
             }
         }
         return false;
+    }
+
+    /**
+     * 生命游戏
+     */
+    public int[][] gameOfLife(int[][] board) {
+        Map<String, Integer> map = new HashMap<>();
+        for (int i = 0; i < board.length; i++) {
+            for (int j = 0; j < board[0].length; j++) {
+                int count = 0;
+                //计算周围细胞存活数量
+                for (int k = -1; k < 2; k++) {
+                    for (int l = -1; l < 2; l++) {
+                        if (i + k > board.length-1
+                                || i + k < 0
+                                || j + l > board[0].length-1
+                                || j + l < 0) continue;
+                        if (board[i + k][j + l] == 1) count++;
+                    }
+                }
+                //若当前是活细胞
+                if (board[i][j] == 1) {
+                    count--;
+                    if (count < 2 || count > 3) {
+                        map.put(i + "_" + j, 0);
+                    }
+                } else if (board[i][j] == 0) {
+                    if (count == 3) {
+                        map.put(i + "_" + j, 1);
+                    }
+                }
+            }
+        }
+        for (Map.Entry<String, Integer> entry : map.entrySet()) {
+            String[] s = entry.getKey().split("_");
+            board[Integer.parseInt(s[0])][Integer.parseInt(s[1])] = entry.getValue();
+        }
+        return board;
     }
 }
