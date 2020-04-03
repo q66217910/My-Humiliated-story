@@ -129,7 +129,48 @@ public class Dp {
         return maxArea;
     }
 
+    /**
+     * 解码方法
+     */
+    public int numDecodings(String s) {
+        char[] arr = s.toCharArray();
+        int[] dp = new int[s.length() + 1];
+        dp[0] = 1;
+        dp[1] = arr[0] == '0' ? 0 : 1;
+        if (s.length() <= 1) return dp[1];
+        for (int i = 2; i <= s.length(); i++) {
+            int n = (arr[i - 2] - '0') * 10 + (arr[i - 1] - '0');
+            if (arr[i - 1] == '0' && arr[i - 2] == '0') {
+                return 0;
+            } else if (arr[i - 2] == '0') {
+                dp[i] = dp[i - 1];
+            } else if (arr[i - 1] == '0') {
+                if (n > 26) return 0;
+                dp[i] = dp[i - 2];
+            } else if (n > 26) {
+                dp[i] = dp[i - 1];
+            } else {
+                dp[i] = dp[i - 1] + dp[i - 2];
+            }
+        }
+        return dp[dp.length - 1];
+    }
+
+    /**
+     * 使用最小花费爬楼梯
+     */
+    public int minCostClimbingStairs(int[] cost) {
+        int size = cost.length;
+        int[] minCost = new int[size];
+        minCost[0] = 0;
+        minCost[1] = Math.min(cost[0], cost[1]);
+        for (int i = 2; i < size; i++) {
+            minCost[i] = Math.min(minCost[i - 1] + cost[i], minCost[i - 2] + cost[i - 1]);
+        }
+        return minCost[size - 1];
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().minPathSum(new int[][]{{1, 3, 1}, {1, 5, 1}, {4, 2, 1}}));
+        System.out.println(new Dp().minCostClimbingStairs(new int[]{0, 1, 1, 0}));
     }
 }

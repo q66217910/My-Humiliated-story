@@ -100,6 +100,60 @@ class  ConcurrentHashMap{
 ```java
 class ConcurrentHashMap{
     
+    //红黑树节点
+    static final class TreeNode<K,V> extends Node<K,V> {
+        //父节点
+        TreeNode<K,V> parent;
+        //左节点
+        TreeNode<K,V> left;
+        //右节点
+        TreeNode<K,V> right;
+        TreeNode<K,V> prev;    
+        boolean red;
+
+        TreeNode(int hash, K key, V val, Node<K,V> next,
+                 TreeNode<K,V> parent) {
+            super(hash, key, val, next);
+            this.parent = parent;
+        }
+
+        Node<K,V> find(int h, Object k) {
+            return findTreeNode(h, k, null);
+        }
+
+        /**
+         *  红黑树的查找
+         */
+        final TreeNode<K,V> findTreeNode(int h, Object k, Class<?> kc) {
+            if (k != null) {
+                TreeNode<K,V> p = this;
+                do  {
+                    int ph, dir; K pk; TreeNode<K,V> q;
+                    TreeNode<K,V> pl = p.left, pr = p.right;
+                    if ((ph = p.hash) > h)
+                        p = pl;
+                    else if (ph < h)
+                        p = pr;
+                    else if ((pk = p.key) == k || (pk != null && k.equals(pk)))
+                        return p;
+                    else if (pl == null)
+                        p = pr;
+                    else if (pr == null)
+                        p = pl;
+                    else if ((kc != null ||
+                              (kc = comparableClassFor(k)) != null) &&
+                             (dir = compareComparables(kc, k, pk)) != 0)
+                        p = (dir < 0) ? pl : pr;
+                    else if ((q = pr.findTreeNode(h, k, kc)) != null)
+                        return q;
+                    else
+                        p = pl;
+                } while (p != null);
+            }
+            return null;
+        }
+    }
+    
 }
 ```
 
