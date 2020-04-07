@@ -84,6 +84,82 @@ class  ConcurrentHashMap{
         }
         return null;
     }
+    
+    final V putVal(K key, V value, boolean onlyIfAbsent) {
+        if (key == null || value == null) throw new NullPointerException();
+        //高位与低位异或
+        int hash = spread(key.hashCode());
+        int binCount = 0;
+        for (Node<K,V>[] tab = table;;) {
+            Node<K,V> f; int n, i, fh;
+            if (tab == null || (n = tab.length) == 0)
+                //table不存在，初始化table
+                tab = initTable();
+            //当前hash要的node节点不存在
+            else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
+                //保存一个新的节点
+                if (casTabAt(tab, i, null,
+                             new Node<K,V>(hash, key, value, null)))
+                    break;                  
+            }
+            //当前节点在扩容
+            else if ((fh = f.hash) == MOVED)
+                //帮助扩容
+                tab = helpTransfer(tab, f);
+            else {
+                V oldVal = null;
+                //对当前节点上锁
+                synchronized (f) {
+                    //判断当前节点是否正常
+                    if (tabAt(tab, i) == f) {
+                        //hash值>0,说明是状态正常
+                        if (fh >= 0) {
+                            binCount = 1;
+                            for (Node<K,V> e = f;; ++binCount) {
+                                K ek;
+                                //若是当前链表节点,则更新值
+                                if (e.hash == hash &&
+                                    ((ek = e.key) == key ||
+                                     (ek != null && key.equals(ek)))) {
+                                    oldVal = e.val;
+                                    if (!onlyIfAbsent)
+                                        e.val = value;
+                                    break;
+                                }
+                                Node<K,V> pred = e;
+                                //若最后都没有找到，则新建一个节点
+                                if ((e = e.next) == null) {
+                                    pred.next = new Node<K,V>(hash, key,
+                                                              value, null);
+                                    break;
+                                }
+                            }
+                        }
+                        //若节点是红黑树
+                        else if (f instanceof TreeBin) {
+                            Node<K,V> p;
+                            binCount = 2;
+                            if ((p = ((TreeBin<K,V>)f).putTreeVal(hash, key,
+                                                           value)) != null) {
+                                oldVal = p.val;
+                                if (!onlyIfAbsent)
+                                    p.val = value;
+                            }
+                        }
+                    }
+                }
+                if (binCount != 0) {
+                    if (binCount >= TREEIFY_THRESHOLD)
+                        treeifyBin(tab, i);
+                    if (oldVal != null)
+                        return oldVal;
+                    break;
+                }
+            }
+        }
+        addCount(1L, binCount);
+        return null;
+    }
 }
 ```
 
@@ -99,6 +175,58 @@ class  ConcurrentHashMap{
 
 ```java
 class ConcurrentHashMap{
+    
+    //节点,用作链表，红黑树节点继承它
+    static class Node<K,V> implements Map.Entry<K,V> {
+        //key的hash值
+        final int hash;
+        //key
+        final K key;
+        //value
+        volatile V val;
+        //链表的下一个节点
+        volatile Node<K,V> next;
+
+        Node(int hash, K key, V val, Node<K,V> next) {
+            this.hash = hash;
+            this.key = key;
+            this.val = val;
+            this.next = next;
+        }
+
+        public final K getKey()       { return key; }
+        public final V getValue()     { return val; }
+        public final int hashCode()   { return key.hashCode() ^ val.hashCode(); }
+        public final String toString(){ return key + "=" + val; }
+        public final V setValue(V value) {
+            throw new UnsupportedOperationException();
+        }
+
+        public final boolean equals(Object o) {
+            Object k, v, u; Map.Entry<?,?> e;
+            return ((o instanceof Map.Entry) &&
+                    (k = (e = (Map.Entry<?,?>)o).getKey()) != null &&
+                    (v = e.getValue()) != null &&
+                    (k == key || k.equals(key)) &&
+                    (v == (u = val) || v.equals(u)));
+        }
+
+        /**
+         * 链表的查找
+         */
+        Node<K,V> find(int h, Object k) {
+            Node<K,V> e = this;
+            if (k != null) {
+                do {
+                    K ek;
+                    if (e.hash == h &&
+                        ((ek = e.key) == k || (ek != null && k.equals(ek))))
+                        return e;
+                } while ((e = e.next) != null);
+            }
+            return null;
+        }
+    }
     
     //红黑树节点
     static final class TreeNode<K,V> extends Node<K,V> {
@@ -128,6 +256,7 @@ class ConcurrentHashMap{
             if (k != null) {
                 TreeNode<K,V> p = this;
                 do  {
+                    //ph当前节点的hash
                     int ph, dir; K pk; TreeNode<K,V> q;
                     TreeNode<K,V> pl = p.left, pr = p.right;
                     if ((ph = p.hash) > h)
@@ -336,4 +465,552 @@ class ConcurrentHashMap{
         }
     }
 }
+```
+
+红黑树
+---
+```java
+static final class TreeBin<K,V> extends Node<K,V> {
+        TreeNode<K,V> root;
+        volatile TreeNode<K,V> first;
+        volatile Thread waiter;
+        volatile int lockState;
+        // values for lockState
+        static final int WRITER = 1; // set while holding write lock
+        static final int WAITER = 2; // set when waiting for write lock
+        static final int READER = 4; // increment value for setting read lock
+
+        /**
+         * Tie-breaking utility for ordering insertions when equal
+         * hashCodes and non-comparable. We don't require a total
+         * order, just a consistent insertion rule to maintain
+         * equivalence across rebalancings. Tie-breaking further than
+         * necessary simplifies testing a bit.
+         */
+        static int tieBreakOrder(Object a, Object b) {
+            int d;
+            if (a == null || b == null ||
+                (d = a.getClass().getName().
+                 compareTo(b.getClass().getName())) == 0)
+                d = (System.identityHashCode(a) <= System.identityHashCode(b) ?
+                     -1 : 1);
+            return d;
+        }
+
+        /**
+         * Creates bin with initial set of nodes headed by b.
+         */
+        TreeBin(TreeNode<K,V> b) {
+            super(TREEBIN, null, null, null);
+            this.first = b;
+            TreeNode<K,V> r = null;
+            for (TreeNode<K,V> x = b, next; x != null; x = next) {
+                next = (TreeNode<K,V>)x.next;
+                x.left = x.right = null;
+                if (r == null) {
+                    x.parent = null;
+                    x.red = false;
+                    r = x;
+                }
+                else {
+                    K k = x.key;
+                    int h = x.hash;
+                    Class<?> kc = null;
+                    for (TreeNode<K,V> p = r;;) {
+                        int dir, ph;
+                        K pk = p.key;
+                        if ((ph = p.hash) > h)
+                            dir = -1;
+                        else if (ph < h)
+                            dir = 1;
+                        else if ((kc == null &&
+                                  (kc = comparableClassFor(k)) == null) ||
+                                 (dir = compareComparables(kc, k, pk)) == 0)
+                            dir = tieBreakOrder(k, pk);
+                            TreeNode<K,V> xp = p;
+                        if ((p = (dir <= 0) ? p.left : p.right) == null) {
+                            x.parent = xp;
+                            if (dir <= 0)
+                                xp.left = x;
+                            else
+                                xp.right = x;
+                            r = balanceInsertion(r, x);
+                            break;
+                        }
+                    }
+                }
+            }
+            this.root = r;
+            assert checkInvariants(root);
+        }
+
+        /**
+         * Acquires write lock for tree restructuring.
+         */
+        private final void lockRoot() {
+            if (!U.compareAndSwapInt(this, LOCKSTATE, 0, WRITER))
+                contendedLock(); // offload to separate method
+        }
+
+        /**
+         * Releases write lock for tree restructuring.
+         */
+        private final void unlockRoot() {
+            lockState = 0;
+        }
+
+        /**
+         * Possibly blocks awaiting root lock.
+         */
+        private final void contendedLock() {
+            boolean waiting = false;
+            for (int s;;) {
+                if (((s = lockState) & ~WAITER) == 0) {
+                    if (U.compareAndSwapInt(this, LOCKSTATE, s, WRITER)) {
+                        if (waiting)
+                            waiter = null;
+                        return;
+                    }
+                }
+                else if ((s & WAITER) == 0) {
+                    if (U.compareAndSwapInt(this, LOCKSTATE, s, s | WAITER)) {
+                        waiting = true;
+                        waiter = Thread.currentThread();
+                    }
+                }
+                else if (waiting)
+                    LockSupport.park(this);
+            }
+        }
+
+        /**
+         * Returns matching node or null if none. Tries to search
+         * using tree comparisons from root, but continues linear
+         * search when lock not available.
+         */
+        final Node<K,V> find(int h, Object k) {
+            if (k != null) {
+                for (Node<K,V> e = first; e != null; ) {
+                    int s; K ek;
+                    if (((s = lockState) & (WAITER|WRITER)) != 0) {
+                        if (e.hash == h &&
+                            ((ek = e.key) == k || (ek != null && k.equals(ek))))
+                            return e;
+                        e = e.next;
+                    }
+                    else if (U.compareAndSwapInt(this, LOCKSTATE, s,
+                                                 s + READER)) {
+                        TreeNode<K,V> r, p;
+                        try {
+                            p = ((r = root) == null ? null :
+                                 r.findTreeNode(h, k, null));
+                        } finally {
+                            Thread w;
+                            if (U.getAndAddInt(this, LOCKSTATE, -READER) ==
+                                (READER|WAITER) && (w = waiter) != null)
+                                LockSupport.unpark(w);
+                        }
+                        return p;
+                    }
+                }
+            }
+            return null;
+        }
+
+        //put时调用
+        final TreeNode<K,V> putTreeVal(int h, K k, V v) {
+            Class<?> kc = null;
+            boolean searched = false;
+            for (TreeNode<K,V> p = root;;) {
+                int dir, ph; K pk;
+                if (p == null) {
+                    //若没有根节点创建新节点
+                    first = root = new TreeNode<K,V>(h, k, v, null, null);
+                    break;
+                }
+                //左节点
+                else if ((ph = p.hash) > h)
+                    dir = -1;
+                //右节点
+                else if (ph < h)
+                    dir = 1;
+                else if ((pk = p.key) == k || (pk != null && k.equals(pk)))
+                    return p;
+                else if ((kc == null &&
+                          (kc = comparableClassFor(k)) == null) ||
+                         (dir = compareComparables(kc, k, pk)) == 0) {
+                    if (!searched) {
+                        TreeNode<K,V> q, ch;
+                        searched = true;
+                        if (((ch = p.left) != null &&
+                             (q = ch.findTreeNode(h, k, kc)) != null) ||
+                            ((ch = p.right) != null &&
+                             (q = ch.findTreeNode(h, k, kc)) != null))
+                            return q;
+                    }
+                    dir = tieBreakOrder(k, pk);
+                }
+
+                TreeNode<K,V> xp = p;
+                //若左节点或者右节点
+                if ((p = (dir <= 0) ? p.left : p.right) == null) {
+                    TreeNode<K,V> x, f = first;
+                    //创建一个子节点
+                    first = x = new TreeNode<K,V>(h, k, v, f, xp);
+                    if (f != null)
+                        f.prev = x;
+                    if (dir <= 0)
+                        xp.left = x;
+                    else
+                        xp.right = x;
+                    //设置是红黑节点,父节点是黑色，当前节点是红色
+                    if (!xp.red)
+                        x.red = true;
+                    else {
+                        //对跟节点上锁
+                        lockRoot();
+                        try {
+                            //旋转树，达到平衡
+                            root = balanceInsertion(root, x);
+                        } finally {
+                            unlockRoot();
+                        }
+                    }
+                    break;
+                }
+            }
+            assert checkInvariants(root);
+            return null;
+        }
+
+        /**
+         * Removes the given node, that must be present before this
+         * call.  This is messier than typical red-black deletion code
+         * because we cannot swap the contents of an interior node
+         * with a leaf successor that is pinned by "next" pointers
+         * that are accessible independently of lock. So instead we
+         * swap the tree linkages.
+         *
+         * @return true if now too small, so should be untreeified
+         */
+        final boolean removeTreeNode(TreeNode<K,V> p) {
+            TreeNode<K,V> next = (TreeNode<K,V>)p.next;
+            TreeNode<K,V> pred = p.prev;  // unlink traversal pointers
+            TreeNode<K,V> r, rl;
+            if (pred == null)
+                first = next;
+            else
+                pred.next = next;
+            if (next != null)
+                next.prev = pred;
+            if (first == null) {
+                root = null;
+                return true;
+            }
+            if ((r = root) == null || r.right == null || // too small
+                (rl = r.left) == null || rl.left == null)
+                return true;
+            lockRoot();
+            try {
+                TreeNode<K,V> replacement;
+                TreeNode<K,V> pl = p.left;
+                TreeNode<K,V> pr = p.right;
+                if (pl != null && pr != null) {
+                    TreeNode<K,V> s = pr, sl;
+                    while ((sl = s.left) != null) // find successor
+                        s = sl;
+                    boolean c = s.red; s.red = p.red; p.red = c; // swap colors
+                    TreeNode<K,V> sr = s.right;
+                    TreeNode<K,V> pp = p.parent;
+                    if (s == pr) { // p was s's direct parent
+                        p.parent = s;
+                        s.right = p;
+                    }
+                    else {
+                        TreeNode<K,V> sp = s.parent;
+                        if ((p.parent = sp) != null) {
+                            if (s == sp.left)
+                                sp.left = p;
+                            else
+                                sp.right = p;
+                        }
+                        if ((s.right = pr) != null)
+                            pr.parent = s;
+                    }
+                    p.left = null;
+                    if ((p.right = sr) != null)
+                        sr.parent = p;
+                    if ((s.left = pl) != null)
+                        pl.parent = s;
+                    if ((s.parent = pp) == null)
+                        r = s;
+                    else if (p == pp.left)
+                        pp.left = s;
+                    else
+                        pp.right = s;
+                    if (sr != null)
+                        replacement = sr;
+                    else
+                        replacement = p;
+                }
+                else if (pl != null)
+                    replacement = pl;
+                else if (pr != null)
+                    replacement = pr;
+                else
+                    replacement = p;
+                if (replacement != p) {
+                    TreeNode<K,V> pp = replacement.parent = p.parent;
+                    if (pp == null)
+                        r = replacement;
+                    else if (p == pp.left)
+                        pp.left = replacement;
+                    else
+                        pp.right = replacement;
+                    p.left = p.right = p.parent = null;
+                }
+
+                root = (p.red) ? r : balanceDeletion(r, replacement);
+
+                if (p == replacement) {  // detach pointers
+                    TreeNode<K,V> pp;
+                    if ((pp = p.parent) != null) {
+                        if (p == pp.left)
+                            pp.left = null;
+                        else if (p == pp.right)
+                            pp.right = null;
+                        p.parent = null;
+                    }
+                }
+            } finally {
+                unlockRoot();
+            }
+            assert checkInvariants(root);
+            return false;
+        }
+
+        /* ------------------------------------------------------------ */
+        // Red-black tree methods, all adapted from CLR
+
+        static <K,V> TreeNode<K,V> rotateLeft(TreeNode<K,V> root,
+                                              TreeNode<K,V> p) {
+            TreeNode<K,V> r, pp, rl;
+            if (p != null && (r = p.right) != null) {
+                if ((rl = p.right = r.left) != null)
+                    rl.parent = p;
+                if ((pp = r.parent = p.parent) == null)
+                    (root = r).red = false;
+                else if (pp.left == p)
+                    pp.left = r;
+                else
+                    pp.right = r;
+                r.left = p;
+                p.parent = r;
+            }
+            return root;
+        }
+
+        static <K,V> TreeNode<K,V> rotateRight(TreeNode<K,V> root,
+                                               TreeNode<K,V> p) {
+            TreeNode<K,V> l, pp, lr;
+            if (p != null && (l = p.left) != null) {
+                if ((lr = p.left = l.right) != null)
+                    lr.parent = p;
+                if ((pp = l.parent = p.parent) == null)
+                    (root = l).red = false;
+                else if (pp.right == p)
+                    pp.right = l;
+                else
+                    pp.left = l;
+                l.right = p;
+                p.parent = l;
+            }
+            return root;
+        }
+
+        static <K,V> TreeNode<K,V> balanceInsertion(TreeNode<K,V> root,
+                                                    TreeNode<K,V> x) {
+            x.red = true;
+            for (TreeNode<K,V> xp, xpp, xppl, xppr;;) {
+                if ((xp = x.parent) == null) {
+                    x.red = false;
+                    return x;
+                }
+                else if (!xp.red || (xpp = xp.parent) == null)
+                    return root;
+                if (xp == (xppl = xpp.left)) {
+                    if ((xppr = xpp.right) != null && xppr.red) {
+                        xppr.red = false;
+                        xp.red = false;
+                        xpp.red = true;
+                        x = xpp;
+                    }
+                    else {
+                        if (x == xp.right) {
+                            root = rotateLeft(root, x = xp);
+                            xpp = (xp = x.parent) == null ? null : xp.parent;
+                        }
+                        if (xp != null) {
+                            xp.red = false;
+                            if (xpp != null) {
+                                xpp.red = true;
+                                root = rotateRight(root, xpp);
+                            }
+                        }
+                    }
+                }
+                else {
+                    if (xppl != null && xppl.red) {
+                        xppl.red = false;
+                        xp.red = false;
+                        xpp.red = true;
+                        x = xpp;
+                    }
+                    else {
+                        if (x == xp.left) {
+                            root = rotateRight(root, x = xp);
+                            xpp = (xp = x.parent) == null ? null : xp.parent;
+                        }
+                        if (xp != null) {
+                            xp.red = false;
+                            if (xpp != null) {
+                                xpp.red = true;
+                                root = rotateLeft(root, xpp);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        static <K,V> TreeNode<K,V> balanceDeletion(TreeNode<K,V> root,
+                                                   TreeNode<K,V> x) {
+            for (TreeNode<K,V> xp, xpl, xpr;;)  {
+                if (x == null || x == root)
+                    return root;
+                else if ((xp = x.parent) == null) {
+                    x.red = false;
+                    return x;
+                }
+                else if (x.red) {
+                    x.red = false;
+                    return root;
+                }
+                else if ((xpl = xp.left) == x) {
+                    if ((xpr = xp.right) != null && xpr.red) {
+                        xpr.red = false;
+                        xp.red = true;
+                        root = rotateLeft(root, xp);
+                        xpr = (xp = x.parent) == null ? null : xp.right;
+                    }
+                    if (xpr == null)
+                        x = xp;
+                    else {
+                        TreeNode<K,V> sl = xpr.left, sr = xpr.right;
+                        if ((sr == null || !sr.red) &&
+                            (sl == null || !sl.red)) {
+                            xpr.red = true;
+                            x = xp;
+                        }
+                        else {
+                            if (sr == null || !sr.red) {
+                                if (sl != null)
+                                    sl.red = false;
+                                xpr.red = true;
+                                root = rotateRight(root, xpr);
+                                xpr = (xp = x.parent) == null ?
+                                    null : xp.right;
+                            }
+                            if (xpr != null) {
+                                xpr.red = (xp == null) ? false : xp.red;
+                                if ((sr = xpr.right) != null)
+                                    sr.red = false;
+                            }
+                            if (xp != null) {
+                                xp.red = false;
+                                root = rotateLeft(root, xp);
+                            }
+                            x = root;
+                        }
+                    }
+                }
+                else { // symmetric
+                    if (xpl != null && xpl.red) {
+                        xpl.red = false;
+                        xp.red = true;
+                        root = rotateRight(root, xp);
+                        xpl = (xp = x.parent) == null ? null : xp.left;
+                    }
+                    if (xpl == null)
+                        x = xp;
+                    else {
+                        TreeNode<K,V> sl = xpl.left, sr = xpl.right;
+                        if ((sl == null || !sl.red) &&
+                            (sr == null || !sr.red)) {
+                            xpl.red = true;
+                            x = xp;
+                        }
+                        else {
+                            if (sl == null || !sl.red) {
+                                if (sr != null)
+                                    sr.red = false;
+                                xpl.red = true;
+                                root = rotateLeft(root, xpl);
+                                xpl = (xp = x.parent) == null ?
+                                    null : xp.left;
+                            }
+                            if (xpl != null) {
+                                xpl.red = (xp == null) ? false : xp.red;
+                                if ((sl = xpl.left) != null)
+                                    sl.red = false;
+                            }
+                            if (xp != null) {
+                                xp.red = false;
+                                root = rotateRight(root, xp);
+                            }
+                            x = root;
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * Recursive invariant check
+         */
+        static <K,V> boolean checkInvariants(TreeNode<K,V> t) {
+            TreeNode<K,V> tp = t.parent, tl = t.left, tr = t.right,
+                tb = t.prev, tn = (TreeNode<K,V>)t.next;
+            if (tb != null && tb.next != t)
+                return false;
+            if (tn != null && tn.prev != t)
+                return false;
+            if (tp != null && t != tp.left && t != tp.right)
+                return false;
+            if (tl != null && (tl.parent != t || tl.hash > t.hash))
+                return false;
+            if (tr != null && (tr.parent != t || tr.hash < t.hash))
+                return false;
+            if (t.red && tl != null && tl.red && tr != null && tr.red)
+                return false;
+            if (tl != null && !checkInvariants(tl))
+                return false;
+            if (tr != null && !checkInvariants(tr))
+                return false;
+            return true;
+        }
+
+        private static final sun.misc.Unsafe U;
+        private static final long LOCKSTATE;
+        static {
+            try {
+                U = sun.misc.Unsafe.getUnsafe();
+                Class<?> k = TreeBin.class;
+                LOCKSTATE = U.objectFieldOffset
+                    (k.getDeclaredField("lockState"));
+            } catch (Exception e) {
+                throw new Error(e);
+            }
+        }
+    } 
 ```
