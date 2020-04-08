@@ -633,7 +633,7 @@ static final class TreeBin<K,V> extends Node<K,V> {
                     dir = -1;
                 //右节点
                 else if (ph < h)
-                    dir = 1;
+                       dir = 1;
                 else if ((pk = p.key) == k || (pk != null && k.equals(pk)))
                     return p;
                 else if ((kc == null &&
@@ -828,21 +828,31 @@ static final class TreeBin<K,V> extends Node<K,V> {
             return root;
         }
 
+        //平衡红黑树
         static <K,V> TreeNode<K,V> balanceInsertion(TreeNode<K,V> root,
                                                     TreeNode<K,V> x) {
             x.red = true;
+            //xp:父节点
+            //xpp:祖父节点
+            //xppl/xppr：叔叔节点
             for (TreeNode<K,V> xp, xpp, xppl, xppr;;) {
+                //1.当前节点父节点为null，当前节点为黑色
                 if ((xp = x.parent) == null) {
                     x.red = false;
                     return x;
                 }
+                //2.父节点为黑色节点，且祖父节点为null，则返回原先的root节点
                 else if (!xp.red || (xpp = xp.parent) == null)
                     return root;
+                //3.查看叔叔节点
+                //(若叔叔节点是红色,把叔叔节点/父节点设置为黑色,祖父节点为红色)
+                //（若叔叔节点是黑色，父节点是右节点左旋，是左节点右旋）
                 if (xp == (xppl = xpp.left)) {
                     if ((xppr = xpp.right) != null && xppr.red) {
                         xppr.red = false;
                         xp.red = false;
                         xpp.red = true;
+                        //把节点置到祖父节点，接着循环，直到root返回
                         x = xpp;
                     }
                     else {
