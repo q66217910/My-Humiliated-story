@@ -170,6 +170,27 @@ public class Dp {
         return minCost[size - 1];
     }
 
+    public int rob(int[] nums) {
+        if (nums.length == 1) {
+            return nums[0];
+        }
+        int[] a = new int[nums.length - 1];
+        int[] b = new int[nums.length - 1];
+        System.arraycopy(nums, 1, a, 0, nums.length - 1);
+        System.arraycopy(nums, 0, b, 0, nums.length - 1);
+        return Math.max(robSub(a), robSub(b));
+    }
+
+    public int robSub(int[] nums) {
+        int pre = 0, cur = 0, tmp;
+        for (int i = 0; i < nums.length; i++) {
+            tmp = cur;
+            cur = Math.max(pre + nums[i], cur);
+            pre = tmp;
+        }
+        return cur;
+    }
+
     public static void main(String[] args) {
         System.out.println(new Dp().minCostClimbingStairs(new int[]{0, 1, 1, 0}));
     }

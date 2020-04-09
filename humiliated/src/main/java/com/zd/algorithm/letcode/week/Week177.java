@@ -10,11 +10,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 public class Week177 {
-
-    public static void main(String[] args) {
-        System.out.println(new Week177().gameOfLife(new int[][]{{0, 1, 0}, {0, 0, 1}, {1, 1, 1}, {0, 0, 0}}));
-    }
-
+    
     public static int daysBetweenDates(String date1, String date2) {
         int ret = 0;
         int RNum = 0;
@@ -145,5 +141,33 @@ public class Week177 {
             queue.add(new int[]{i, j + 1, si, (j + 1) % 10 != 0 ? sj + 1 : sj - 8});
         }
         return res;
+    }
+
+    List<String>[] cache = new ArrayList[100];
+
+    public List<String> generateParenthesis(int n) {
+        return generate(n);
+    }
+
+    private List<String> generate(int n) {
+        if (cache[n] != null) {
+            return cache[n];
+        }
+        List<String> ans = new ArrayList<>();
+        if (n == 0) {
+            ans.add("");
+        } else {
+            for (int i = 0; i < n; i++) {
+                for (String left: generate(i))
+                    for (String right: generate(n - 1 - i))
+                        ans.add("(" + left + ")" + right);
+            }
+        }
+        cache[n] = ans;
+        return ans;
+    }
+
+    public static void main(String[] args) {
+        System.out.println(new Week177().generateParenthesis(3));
     }
 }
