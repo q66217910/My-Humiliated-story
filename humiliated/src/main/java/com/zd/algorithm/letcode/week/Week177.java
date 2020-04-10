@@ -10,7 +10,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 public class Week177 {
-    
+
     public static int daysBetweenDates(String date1, String date2) {
         int ret = 0;
         int RNum = 0;
@@ -158,8 +158,8 @@ public class Week177 {
             ans.add("");
         } else {
             for (int i = 0; i < n; i++) {
-                for (String left: generate(i))
-                    for (String right: generate(n - 1 - i))
+                for (String left : generate(i))
+                    for (String right : generate(n - 1 - i))
                         ans.add("(" + left + ")" + right);
             }
         }
@@ -167,7 +167,25 @@ public class Week177 {
         return ans;
     }
 
+    public String reverseWords(String s) {
+        s = s.trim();
+        StringBuilder result = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
+        for (int i = s.length() - 1; i >= 0; i--) {
+            if (s.charAt(i) != ' ') {
+                sb.append(s.charAt(i));
+            }
+            if (i >= 1 && s.charAt(i) == ' ' && s.charAt(i - 1) != ' ') {
+                result.append(sb.reverse().toString()).append(" ");
+                sb = new StringBuilder();
+            }
+        }
+        result.append(sb.reverse().toString());
+        return result.toString();
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Week177().generateParenthesis(3));
+        System.out.println(new Week177().reverseWords(
+                "the sky is blue"));
     }
 }
