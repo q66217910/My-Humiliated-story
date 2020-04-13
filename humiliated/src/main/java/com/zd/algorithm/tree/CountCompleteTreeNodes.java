@@ -41,4 +41,5 @@ public class CountCompleteTreeNodes {
         }
         return countChildTreeHigh(child.getLeft()) + 1;
     }
+    
 }
