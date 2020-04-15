@@ -634,8 +634,11 @@ static final class TreeBin<K,V> extends Node<K,V> {
                 //右节点
                 else if (ph < h)
                        dir = 1;
+                //当前节点
                 else if ((pk = p.key) == k || (pk != null && k.equals(pk)))
                     return p;
+                //若hashcode相同，但是equels不等
+                //k不是实现Comparable类或者实现了当前节点的key与插入节点的key相等
                 else if ((kc == null &&
                           (kc = comparableClassFor(k)) == null) ||
                          (dir = compareComparables(kc, k, pk)) == 0) {
