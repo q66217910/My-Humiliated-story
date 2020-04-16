@@ -289,7 +289,27 @@ public class Week180 {
         return text;
     }
 
+    public int[][] merge(int[][] intervals) {
+        int len = intervals.length;
+        if (len < 1) return intervals;
+
+        //先按最小值排序
+        Arrays.sort(intervals, Comparator.comparingInt(a -> a[0]));
+
+        List<int[]> list = new ArrayList<>(len);
+        for (int i = 0; i < len - 1; i++) {
+            if (intervals[i][1] >= intervals[i + 1][0]) {
+                intervals[i + 1][0] = intervals[i][0];
+                intervals[i + 1][1] = Math.max(intervals[i + 1][1], intervals[i][1]);
+            } else list.add(intervals[i]);
+        }
+        list.add(intervals[len - 1]);
+
+        return list.toArray(new int[list.size()][2]);
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Week180().entityParser("&amp; is an HTML entity but &ambassador; is not."));
+        System.out.println(new Week180().merge(new int[][]{
+                {1, 3}, {2, 6}, {8, 10}, {15, 18}}));
     }
 }
