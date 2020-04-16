@@ -171,7 +171,17 @@ class  ConcurrentHashMap{
     红黑树: 当节点数量大于8时会由链表转红黑树,数量小于6会由红黑树转为链表
     注: 为什么是8和6？
         因为红黑树的查询时间复杂度是O(log(n))、链表的平均时间复杂度为O(n/2),长度为8时,log8=3，n/2=4,红黑树更快.
-        而在6转回链表,是为了在链表和红黑树之间转换过于频繁。        
+        而在6转回链表,是为了在链表和红黑树之间转换过于频繁。 
+
+ 红黑树中key的顺序
+
+    1.根据hashcode判断,因为是二叉搜索树所以顺序按照当前节点比左节点大，比右节点小。
+        (hashcode小了找左子树,大了找右子树)
+    2.当hashcode相同并且 equels方法得出结果相同或者对象指针相同，则代表是当前节点
+    3.当hashcode相同但是equels并不等,则根据Comparable方法，比较当前节点key与查询key
+       的比值。
+    4.若Comparable得出的结果还相同,比较原始的hashcode(System.identityHashCode())
+    5.若还相等则默认插入左子节点
 
 ```java
 class ConcurrentHashMap{
