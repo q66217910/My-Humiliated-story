@@ -408,6 +408,7 @@ class ConcurrentHashMap{
                         break;
                     //若sizeCtl的值相同,则可以多线程扩容,并将sc+1
                     if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
+                        //协助扩容,nt:新table，协助将老数据迁入新表
                         transfer(tab, nt);
                 }    
                 // 如果是sc为正数，上CAS锁，开始扩容，设置 sc的值
