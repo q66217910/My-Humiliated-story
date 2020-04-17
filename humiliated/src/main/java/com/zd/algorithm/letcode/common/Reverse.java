@@ -11,10 +11,6 @@ import java.util.stream.Collectors;
 
 public class Reverse {
 
-    public static void main(String[] args) {
-        System.out.println(new Reverse().findTheLongestSubstring("eleetminicoworoep"));
-    }
-
     /**
      * 整数反转
      * 1. 取余获取最后一位pop，push到新数的第一位
@@ -172,5 +168,22 @@ public class Reverse {
             }
         }
         return result;
+    }
+
+    public String reverseStr(String s, int k) {
+        char[] a = s.toCharArray();
+        for (int start = 0; start < s.length(); start += 2 * k) {
+            int i = start, j = Math.min(start + k - 1, a.length - 1);
+            while (i < j) {
+                char tmp = a[i];
+                a[i++] = a[j];
+                a[j--] = tmp;
+            }
+        }
+        return new String(a);
+    }
+
+    public static void main(String[] args) {
+        new Reverse().reverseStr("abcdefg", 2);
     }
 }
