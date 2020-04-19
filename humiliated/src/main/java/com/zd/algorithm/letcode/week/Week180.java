@@ -1,5 +1,7 @@
 package com.zd.algorithm.letcode.week;
 
+import com.google.common.collect.Lists;
+
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -308,8 +310,412 @@ public class Week180 {
         return list.toArray(new int[list.size()][2]);
     }
 
+    public int game(int[] guess, int[] answer) {
+        int result = 0;
+        for (int i = 0; i < guess.length; i++) {
+            if (guess[i] == answer[i]) result++;
+        }
+        return result;
+    }
+
+    public int minCount(int[] coins) {
+        int num = 0;
+        for (int coin : coins) {
+            if (coin % 2 == 0) {
+                num += coin / 2;
+            } else {
+                num += coin / 2 + 1;
+            }
+        }
+        return num;
+    }
+
+    public int numWays(int n, int[][] relation, int k) {
+        int num = 0;
+        Stack<Integer> stack = new Stack<>();
+        stack.push(0);
+        for (int i = 0; i < k; i++) {
+            Stack<Integer> temp = new Stack<>();
+            while (stack.size() > 0) {
+                Integer value = stack.pop();
+                for (int[] ints : relation) {
+                    if (ints[0] == value) {
+                        if (i == k - 1 && ints[1] == n - 1) {
+                            num++;
+                        }
+                        temp.push(ints[1]);
+                    }
+                }
+            }
+            stack = temp;
+        }
+        return num;
+    }
+
+
+    public int[] getTriggerTime(int[][] increase, int[][] requirements) {
+        int n = requirements.length;
+        int m = increase.length;
+        int[] result = new int[n];
+        int[][] increases = new int[increase.length + 1][3];
+        Arrays.fill(result, -1);
+        int[] c = new int[increase.length + 1];
+        int[] r = new int[increase.length + 1];
+        int[] h = new int[increase.length + 1];
+        c[0] = 0;
+        r[0] = 0;
+        h[0] = 0;
+        for (int i = 0; i < m; i++) {
+            increases[i + 1][0] = increases[i][0] + increase[i][0];
+            increases[i + 1][1] += increases[i][1] + increase[i][1];
+            increases[i + 1][2] += increases[i][2] + increase[i][2];
+            c[i + 1] = increases[i + 1][0];
+            r[i + 1] = increases[i + 1][1];
+            h[i + 1] = increases[i + 1][2];
+        }
+        for (int i = 0; i < n; i++) {
+            int[] re = requirements[i];
+            int value1 = binarySearch(c, re[0]);
+            int value2 = binarySearch(r, re[1]);
+            int value3 = binarySearch(h, re[2]);
+            if (value1 == -1 || value2 == -1 || value3 == -1) {
+                result[i] = -1;
+            } else {
+                result[i] = Math.max(Math.max(value1, value2), value3);
+            }
+
+        }
+        return result;
+    }
+
+    private int binarySearch(int[] arr, int key) {
+        int left = 0, right = arr.length - 1;
+        //最大值小于key，不存在等于或者大于key的元素
+        if (arr[right] < key) {
+            return -1;
+        }
+        while (left <= right) {
+            int mid = left + (right - left) / 2;
+            if (arr[mid] >= key) {
+                right = mid - 1;
+            } else {
+                left = mid + 1;
+            }
+        }
+        return left;
+    }
+
+    public int minJump(int[] jump) {
+        int n = jump.length;
+        int[] dp = new int[n];
+        int cur = 0;
+        dp[0] = jump[0] >= jump.length ? 1 : 0;
+        for (int i = 1; i < n; i++) {
+            if (jump[i] + i >= jump.length) {
+                dp[i] = 1;
+                if (cur == 0) {
+                    cur = i;
+                }
+            } else if (dp[i - 1] > 0) {
+                dp[i] = 2;
+            }
+        }
+        while (dp[0] == 0) {
+            int value = 0;
+            int temp = 0;
+            for (int i = 0; i < cur; i++) {
+                if (dp[i + jump[i]] > 0) {
+                    dp[i] = dp[i + jump[i]] + 1;
+                    value = dp[i];
+                    if (temp == 0) {
+                        temp = i;
+                    }
+                }
+            }
+            for (int i = 0; i < cur; i++) {
+                if (dp[i] > 0) {
+                    value = dp[i];
+                }
+                if (i > 0 && dp[i - 1] > 0 && dp[i] == 0) {
+                    dp[i] = value + 1;
+                }
+            }
+            cur = temp;
+        }
+        return dp[0];
+    }
+
+    public int minStartValue(int[] nums) {
+        int num = 0;
+        int temp = 0;
+        for (int i = 0; i < nums.length; i++) {
+            temp += nums[i];
+            num = Math.min(temp, num);
+        }
+        return -num + 1;
+    }
+
+    public int findMinFibonacciNumbers(int k) {
+        List<Integer> list = new ArrayList<>();
+        int a = 1, b = 1, num = 0;
+        while (a <= k) {
+            list.add(b);
+            int temp = a + b;
+            a = b;
+            b = temp;
+        }
+        int max = list.size();
+        while (k > 0) {
+            while (list.get(max - 1) > k) {
+                max--;
+            }
+            k -= list.get(max - 1);
+            num++;
+        }
+        return num;
+    }
+
+    public String getHappyString(int n, int k) {
+        if (n > 0) {
+            char[] chars = new char[n];
+            if (3 * Math.pow(2, n - 1) >= k) {
+                for (int i = 0; i < n; i++) {
+                    if (i % 2 == 1) {
+                        chars[i] = 'b';
+                    } else {
+                        chars[i] = 'a';
+                    }
+                }
+                int[] result = new int[n];
+                int num = 0;
+                k = k - 1;
+                while (k > 0) {
+                    if (num != n - 1) {
+                        result[num++] = k % 2;
+                        k /= 2;
+                    } else {
+                        result[num++] = k % 3;
+                        k /= 3;
+                    }
+                }
+
+                char[][] c = new char[3][];
+                c[0] = new char[2];
+                c[0][0] = 'b';
+                c[0][1] = 'c';
+                c[1] = new char[2];
+                c[1][0] = 'a';
+                c[1][1] = 'c';
+                c[2] = new char[2];
+                c[2][0] = 'a';
+                c[2][1] = 'b';
+
+                while (num > 0) {
+                    if (num == n) {
+                        chars[chars.length - num] = (char) ('a' + result[--num]);
+                    } else {
+                        chars[chars.length - num] = c[chars[chars.length - num - 1] - 'a'][result[--num]];
+                    }
+                }
+                return new String(chars);
+            }
+        }
+        return "";
+    }
+
+    public int numberOfArrays(String s, int k) {
+        int n = s.length();
+        int[] dp = new int[n];
+        dp[0] = 1;
+        StringBuffer sb = new StringBuffer();
+        sb.append(s.charAt(0));
+        for (int i = 1; i < s.length(); i++) {
+            if (s.charAt(i) == '0') {
+                dp[i] = dp[i - 1];
+            } else {
+                dp[i] = dp[i - 1] + i;
+            }
+        }
+        return dp[n - 1];
+    }
+
+    public String reformat(String s) {
+        List<Character> dists = new ArrayList<>();
+        List<Character> chars = new ArrayList<>();
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isDigit(s.charAt(i))) {
+                dists.add(s.charAt(i));
+            } else {
+                chars.add(s.charAt(i));
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        if (Math.abs(dists.size() - chars.size()) <= 1) {
+            if (chars.size() > dists.size()) {
+                sb.append(chars.get(chars.size() - 1));
+            }
+            for (int i = 0; i < Math.min(dists.size(), chars.size()); i++) {
+                sb.append(dists.get(i));
+                sb.append(chars.get(i));
+            }
+            if (dists.size() > chars.size()) {
+                sb.append(dists.get(dists.size() - 1));
+            }
+        }
+        return sb.toString();
+    }
+
+    public List<List<String>> displayTable(List<List<String>> orders) {
+        Map<String, Map<String, Long>> map = orders.stream()
+                .collect(Collectors.groupingBy(list -> list.get(1),
+                        Collectors.groupingBy(a -> a.get(2),
+                                Collectors.counting())));
+        List<List<String>> result = new ArrayList<>();
+        //所有菜品
+        List<String> set = orders.stream().map(a -> a.get(2)).sorted().distinct().collect(Collectors.toList());
+        set.add(0, "Table");
+        result.add(set);
+        List<String> collect = map.keySet().stream().mapToInt(Integer::parseInt).sorted().mapToObj(String::valueOf).collect(Collectors.toList());
+        collect.forEach(en -> {
+            Map<String, Long> value = map.get(en);
+            List<String> list = new ArrayList<>();
+            //桌号
+            list.add(en);
+            for (int i = 1; i < set.size(); i++) {
+                Long num = value.get(set.get(i));
+                list.add(num == null ? "0" : num.toString());
+            }
+            result.add(list);
+        });
+        return result;
+    }
+
+    public int minNumberOfFrogs(String croakOfFrogs) {
+        Stack<Character> c = new Stack<>();
+        Stack<Character> r = new Stack<>();
+        Stack<Character> o = new Stack<>();
+        Stack<Character> a = new Stack<>();
+        int num = 0;
+        for (int i = 0; i < croakOfFrogs.length(); i++) {
+            if (croakOfFrogs.charAt(i) == 'c') {
+                c.push(croakOfFrogs.charAt(i));
+            } else if (croakOfFrogs.charAt(i) == 'r') {
+                if (c.isEmpty()) {
+                    return -1;
+                }
+                r.push(croakOfFrogs.charAt(i));
+            } else if (croakOfFrogs.charAt(i) == 'o') {
+                if (c.isEmpty() || r.isEmpty()) {
+                    return -1;
+                }
+                o.push(croakOfFrogs.charAt(i));
+            } else if (croakOfFrogs.charAt(i) == 'a') {
+                if (c.isEmpty() || r.isEmpty() || o.isEmpty()) {
+                    return -1;
+                }
+                a.push(croakOfFrogs.charAt(i));
+            } else {
+                if (c.isEmpty() || r.isEmpty() || o.isEmpty() || a.isEmpty()) {
+                    return -1;
+                }
+                c.pop();
+                r.pop();
+                o.pop();
+                a.pop();
+                num = Math.max(num, c.size());
+            }
+        }
+        if (!c.isEmpty() || !r.isEmpty() || !o.isEmpty() || !a.isEmpty()) {
+            return -1;
+        }
+        return num + 1;
+    }
+
+    public int getMaxRepetitions(String s1, int n1, String s2, int n2) {
+        int len1 = s1.length();
+        int len2 = s2.length();
+        if (len1 == 0 || len2 == 0 || n1 == 0 || n2 == 0) {
+            return 0;
+        }
+        char[] chars1 = s1.toCharArray();
+        char[] chars2 = s2.toCharArray();
+        // 记录下一个要匹配的s2中字符的索引
+        int index = 0;
+        // 记录匹配完的s2个数
+        int count = 0;
+        // 记录在遍历每个s1时匹配出的s2的个数，可能是包含了前面一个s1循环节的部分
+        int[] countRecorder = new int[len2 + 1];
+        // 记录在每个s1中想要匹配的s2中字符的索引
+        int[] indexRecorder = new int[len2 + 1];
+        for (int i = 0; i < n1; ++i) {
+            for (int j = 0; j < len1; ++j) {
+                // 匹配s2字符，匹配成功，s2索引+1
+                if (chars1[j] == chars2[index]) {
+                    ++index;
+                }
+                // 匹配完一个s2，计数器+1，重置s2索引
+                if (index == chars2.length) {
+                    index = 0;
+                    ++count;
+                }
+            }
+            // 记录遍历完i个s1后s2出现的次数
+            countRecorder[i] = count;
+            // 记录遍历完第i个s1后s2下一个要被匹配到的字符下标
+            indexRecorder[i] = index;
+            // 剪枝
+            // 查看该索引在之前是否已出现，出现即表示已经出现循环节，可以直接进行计算
+            // 上一次出现该索引是在第j个s1中（同时可以说明第一个循环节的出现是从第j+1个s1开始的）
+            for (int j = 0; j < i && indexRecorder[j] == index; ++j) {
+                // preCount: 记录循环节出现之前的s2出现的个数
+                int preCount = countRecorder[j];
+                // patternCount: 记录所有循环节构成的字符串中出现s2的个数
+                //      (n1 - 1 - j) / (i - j): 循环节个数
+                //      countRecorder[i] - countRecorder[j]: 一个循环节中包含的s2个数
+                int patternCount = ((n1 - 1 - j) / (i - j)) * (countRecorder[i] - countRecorder[j]);
+                // remainCount: 记录剩余未构成完整循环节的部分出现的s2的个数
+                //      通过取模从已有循环节记录中查找，并减去循环节之前出现的次数
+                int remainCount = countRecorder[j + (n1 - 1 - j) % (i - j)] - countRecorder[j];
+                // 三者相加，即为出现的s2的总次数
+                return (preCount + patternCount + remainCount) / n2;
+            }
+        }
+        // 没有循环节的出现，相当于直接使用暴力法
+        return countRecorder[n1 - 1] / n2;
+    }
+
+    private boolean max(int[] arr, int k) {
+        int maxValue = -1;
+        int maxIndex = -1;
+        int cost = 0;
+        for (int i = 0; i < arr.length; i++) {
+            if (maxValue < arr[i]) {
+                maxValue = arr[i];
+                maxIndex = i;
+                cost += 1;
+            }
+        }
+        return cost == k;
+    }
+
+    public int countNegatives(int[][] grid) {
+        int n = grid.length;
+        if (n == 0) {
+            return 0;
+        }
+        int num = 0;
+        int m = grid[0].length;
+        for (int[] ints : grid) {
+            for (int j = 0; j < m; j++) {
+                if (ints[j] < 0) {
+                    num++;
+                }
+            }
+        }
+        return num;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Week180().merge(new int[][]{
-                {1, 3}, {2, 6}, {8, 10}, {15, 18}}));
+        System.out.println(new Week180().minNumberOfFrogs("ccccccccccrrccccccrcccccccccccrcccccccccrcccccccccccrcccccrcccrrcccccccccccccrocrrcccccccccrccrocccccrccccrrcccccccrrrcrrcrccrcoccroccrccccccccorocrocccrrrrcrccrcrcrcrccrcroccccrccccroorcacrkcccrrroacccrrrraocccrrcrrccorooccrocacckcrcrrrrrrkrrccrcoacrcorcrooccacorcrccccoocroacroraoaarcoorrcrcccccocrrcoccarrorccccrcraoocrrrcoaoroccooccororrrccrcrocrrcorooocorarccoccocrrrocaccrooaaarrcrarooaarrarrororrcrcckracaccorarorocacrrarorrraoacrcokcarcoccoorcrrkaocorcrcrcrooorrcrroorkkaaarkraroraraarooccrkcrcraocooaoocraoorrrccoaraocoorrcokrararrkaakaooroorcororcaorckrrooooakcarokokcoarcccroaakkrrororacrkraooacrkaraoacaraorrorrakaokrokraccaockrookrokoororoooorroaoaokccraoraraokakrookkroakkaookkooraaocakrkokoraoarrakakkakaroaaocakkarkoocokokkrcorkkoorrkraoorkokkarkakokkkracocoaaaaakaraaooraokarrakkorokkoakokakakkcracarcaoaaoaoorcaakkraooaoakkrrroaoaoaarkkarkarkrooaookkroaaarkooakarakkooaokkoorkroaaaokoarkorraoraorcokokaakkaakrkaaokaaaroarkokokkokkkoakaaookkcakkrakooaooroaaaaooaooorkakrkkakkkkaokkooaakorkaroaorkkokaakaaaaaocrrkakrooaaroroakrakrkrakaoaaakokkaaoakrkkoakocaookkakooorkakoaaaaakkokakkorakaaaaoaarkokorkakokakckckookkraooaakokrrakkrkookkaaoakaaaokkaokkaaoakarkakaakkakorkaakkakkkakaaoaakkkaoaokkkakkkoaroookakaokaakkkkkkakoaooakcokkkrrokkkkaoakckakokkocaokaakakaaakakaakakkkkrakoaokkaakkkkkokkkkkkkkrkakkokkroaakkakaoakkoakkkkkkakakakkkaakkkkakkkrkoak"));
     }
 }

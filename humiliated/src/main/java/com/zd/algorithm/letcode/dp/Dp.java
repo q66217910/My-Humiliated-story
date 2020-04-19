@@ -191,7 +191,75 @@ public class Dp {
         return cur;
     }
 
+    public int[][] updateMatrix(int[][] matrix) {
+        int n = matrix.length;
+        int m = matrix[0].length;
+        int[][] result = new int[n][m];
+        for (int[] ints : result) {
+            Arrays.fill(ints, Integer.MAX_VALUE);
+        }
+        //元素为0的距离一定为0
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < m; ++j) {
+                if (matrix[i][j] == 0) {
+                    result[i][j] = 0;
+                }
+            }
+        }
+        //向左，然后向上
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < m; ++j) {
+                if (i - 1 >= 0) {
+                    result[i][j] = Math.min(result[i][j], result[i - 1][j] + 1);
+                }
+                if (j - 1 >= 0) {
+                    result[i][j] = Math.min(result[i][j], result[i][j - 1] + 1);
+                }
+            }
+        }
+        //向右，然后向下
+        for (int i = n - 1; i >= 0; --i) {
+            for (int j = m - 1; j >= 0; --j) {
+                if (i + 1 < n) {
+                    result[i][j] = Math.min(result[i][j], result[i + 1][j] + 1);
+                }
+                if (j + 1 < m) {
+                    result[i][j] = Math.min(result[i][j], result[i][j + 1] + 1);
+                }
+            }
+        }
+        return result;
+    }
+
+    public boolean canJump(int[] nums) {
+        boolean[] dp = new boolean[nums.length];
+        dp[0] = true;
+        for (int i = 0; i < nums.length; i++) {
+            if (dp[i]) {
+                for (int j = 0; j <= nums[i]; j++) {
+                    if (i + j < nums.length) dp[i + j] = true;
+                }
+            }
+        }
+        return dp[nums.length - 1];
+    }
+
+    public int maxArea(int[] height) {
+        int n = height.length;
+        int[] dp = new int[n];
+        dp[0] = 0;
+        int result = 0;
+        for (int i = 0; i < n; i++) {
+            for (int j = i + 1; j < n; j++) {
+                int temp = Math.min(height[i], height[j]) * (j - i);
+                dp[i] = Math.max(temp, dp[i]);
+            }
+            result = Math.max(result, dp[i]);
+        }
+        return result;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().minCostClimbingStairs(new int[]{0, 1, 1, 0}));
+        System.out.println(new Dp().maxArea(new int[]{1,1}));
     }
 }
