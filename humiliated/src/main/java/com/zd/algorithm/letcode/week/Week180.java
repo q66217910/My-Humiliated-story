@@ -730,7 +730,43 @@ public class Week180 {
         return ret;
     }
 
+    public int[] replaceElements(int[] arr) {
+        int max = arr[arr.length - 1];
+        arr[arr.length - 1] = -1;
+        for (int i = arr.length - 2; i >= 0; i--) {
+            int temp = max;
+            max = Math.max(max, arr[i]);
+            arr[i] = temp;
+
+        }
+        return arr;
+    }
+
+    public int oddCells(int n, int m, int[][] indices) {
+        //行
+        boolean[] r = new boolean[n];
+        //列
+        boolean[] c = new boolean[m];
+        //行与列是否为奇数
+        for (int[] index : indices) {
+            r[index[0]] = !r[index[0]];
+            c[index[1]] = !c[index[1]];
+        }
+        int rr = 0, cc = 0;
+        //行的奇数总数
+        for (boolean b : r) {
+            if (b) rr++;
+        }
+        //列的奇数总数
+        for (boolean b : c) {
+            if (b) cc++;
+        }
+        //每行rr*m列+ 每列cc*n行- rr * cc * 2（重复计算的数量，*2是因为重复后变偶数）
+        return rr * m + cc * n - rr * cc * 2;
+    }
+
     public static void main(String[] args) {
-        new Week180().numberOfSubarrays(new int[]{2, 2, 2, 1, 2, 2, 1, 2, 2, 2}, 2);
+        new Week180().replaceElements(new int[]{
+                17, 18, 5, 4, 6, 1});
     }
 }

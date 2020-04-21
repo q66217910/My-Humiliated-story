@@ -303,7 +303,36 @@ public class Dp {
         return list;
     }
 
+    public int[] sumZero(int n) {
+        int[] result = new int[n];
+        for (int i = 0; i < n / 2; i++) {
+            int j = i + 1;
+            result[i] = j;
+            result[n - i - 1] = -j;
+        }
+        if (n % 2 == 1) {
+            result[n / 2] = 0;
+        }
+        return result;
+    }
+
+    public int[] sortArrayByParity(int[] A) {
+        return Arrays.stream(A).boxed().sorted(Comparator.comparing(a -> a % 2 == 1)).mapToInt(Integer::intValue).toArray();
+    }
+
+    public int maximum(int a, int b) {
+        // 先考虑没有溢出时的情况，计算 b - a 的最高位，依照题目所给提示 k = 1 时 a > b，即 b - a 为负
+        int k = b - a >>> 31;
+        // 再考虑 a b 异号的情况，此时无脑选是正号的数字
+        int aSign = a >>> 31, bSign = b >>> 31;
+        // diff = 0 时同号，diff = 1 时异号
+        int diff = aSign ^ bSign;
+        // 在异号，即 diff = 1 时，使之前算出的 k 无效，只考虑两个数字的正负关系
+        k = k & (diff ^ 1) | bSign & diff;
+        return a * k + b * (k ^ 1);
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().arrangeCoins(8));
+        System.out.println(new Dp().sortArrayByParity(new int[]{3, 1, 2, 4}));
     }
 }
