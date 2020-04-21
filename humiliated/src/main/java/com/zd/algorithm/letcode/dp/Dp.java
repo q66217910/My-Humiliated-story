@@ -1,6 +1,6 @@
 package com.zd.algorithm.letcode.dp;
 
-import java.util.Arrays;
+import java.util.*;
 
 public class Dp {
 
@@ -259,7 +259,51 @@ public class Dp {
         return result;
     }
 
+    public int arrangeCoins(int n) {
+        int num = 1;
+        while (n >= 0) {
+            n -= num++;
+        }
+        return num - 2;
+    }
+
+    public int numberOfBoomerangs(int[][] points) {
+        int ans = 0;
+        for (int i = 0; i < points.length; i++) {
+            Map<Integer, Integer> map = new HashMap<>();
+            for (int j = 0; j < points.length; j++) {
+                if (i != j) {
+                    int dis = dis(points[i], points[j]);
+                    map.put(dis, map.getOrDefault(dis, 0) + 1);
+                }
+            }
+            // 排列组合，例如：三个数选两个并且可以改变顺序，也就是A32 = 3 * 2
+            for (int dis : map.keySet()) {
+                ans += (map.get(dis)) * (map.get(dis) - 1);
+            }
+        }
+        return ans;
+    }
+
+    // 计算距离（平方和）
+    private int dis(int[] a, int[] b) {
+        return (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]);
+    }
+
+    public List<Integer> findDisappearedNumbers(int[] nums) {
+        List<Integer> list = new ArrayList<>();
+        Arrays.sort(nums);
+        int j = 1;
+        for (int i = 0; i < nums.length; i++, j++) {
+            if (j != nums[i]) {
+                list.add(j);
+                i--;
+            }
+        }
+        return list;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().maxArea(new int[]{1,1}));
+        System.out.println(new Dp().arrangeCoins(8));
     }
 }
