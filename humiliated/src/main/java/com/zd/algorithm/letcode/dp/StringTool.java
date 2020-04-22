@@ -1,5 +1,7 @@
 package com.zd.algorithm.letcode.dp;
 
+import java.util.Arrays;
+import java.util.Stack;
 import java.util.stream.IntStream;
 
 public class StringTool {
@@ -106,4 +108,73 @@ public class StringTool {
         return IntStream.range(0, result).toArray();
     }
 
+
+    public int balancedStringSplit(String s) {
+        int rNum = 0, lNum = 0, result = 0;
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == 'R') {
+                rNum++;
+            } else {
+                lNum++;
+            }
+            if (rNum == lNum) {
+                rNum = 0;
+                lNum = 0;
+                result++;
+            }
+        }
+        return result;
+    }
+
+    public int[] sortedSquares(int[] A) {
+        for (int i = 0; i < A.length; i++) {
+            A[i] = A[i] * A[i];
+        }
+        Arrays.sort(A);
+        return A;
+    }
+
+    public String replaceSpace(String s) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == ' ') {
+                sb.append("%20");
+            } else {
+                sb.append(s.charAt(i));
+            }
+        }
+        return sb.toString();
+    }
+
+    public int peakIndexInMountainArray(int[] A) {
+        for (int i = 0; i < A.length - 1; i++) {
+            if (A[i + 1] < A[i]) {
+                return i;
+            }
+        }
+        return A.length - 1;
+    }
+
+    public int arrayPairSum(int[] nums) {
+        int result = 0;
+        Arrays.sort(nums);
+        for (int i = 0; i < nums.length; i += 2) {
+            result += nums[i];
+        }
+        return result;
+    }
+
+    public int binaryGap(int N) {
+        int last = -1, res = 0;
+        //32次
+        for (int i = 0; i < 32; i++) {
+            if ((N >> i & 1) == 1) {
+                if (last != -1) {
+                    res = Math.max(res, i - last);
+                }
+                last = i;
+            }
+        }
+        return res;
+    }
 }
