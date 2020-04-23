@@ -1,6 +1,8 @@
 package com.zd.algorithm.letcode.dp;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Stack;
 import java.util.stream.IntStream;
 
@@ -176,5 +178,51 @@ public class StringTool {
             }
         }
         return res;
+    }
+
+    public int[] decompressRLElist(int[] nums) {
+        List<Integer> list = new ArrayList<>();
+        for (int i = 0; i < nums.length; i += 2) {
+            for (int j = 0; j < nums[i]; j++) {
+                list.add(nums[i + 1]);
+            }
+        }
+        return list.stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    public boolean judgeSquareSum(int c) {
+        if (c == 0) {
+            return true;
+        }
+        for (int i = 0; i * i <= c; i++) {
+            int left = 0, right = c;
+            while (left < right) {
+                int mid = (left + right) / 2;
+                int value = i * i + mid * mid;
+                if (value < c) {
+                    left = mid + 1;
+                } else if (value > c) {
+                    right = mid;
+                } else {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public int waysToChange(int n) {
+        int ans = 0;
+        for (int i = 0; i * 25 <= n; ++i) {
+            int rest = n - i * 25;
+            int a = rest / 10;
+            int b = rest % 10 / 5;
+            ans = (int)(ans + (long)(a + 1) * (a + b + 1) % 1000000007) % 1000000007;
+        }
+        return ans;
+    }
+
+    public static void main(String[] args) {
+        System.out.println(new StringTool().waysToChange(10));
     }
 }

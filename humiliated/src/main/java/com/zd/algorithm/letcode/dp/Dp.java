@@ -2,6 +2,7 @@ package com.zd.algorithm.letcode.dp;
 
 import java.util.*;
 
+
 public class Dp {
 
     /**
@@ -332,7 +333,96 @@ public class Dp {
         return a * k + b * (k ^ 1);
     }
 
+    public int numSquares(int n) {
+        int[] dp = new int[n + 1];
+        Arrays.fill(dp, Integer.MAX_VALUE);
+        dp[0] = 0;
+        int index = (int) Math.sqrt(n) + 1;
+        int[] squares = new int[index];
+        //所有可能平方的值
+        for (int i = 1; i < index; i++) {
+            squares[i] = i * i;
+        }
+        for (int i = 1; i <= n; ++i) {
+            for (int j = 1; j < index; j++) {
+                if (i < squares[j]) break;
+                dp[i] = Math.min(dp[i], dp[i - squares[j]] + 1);
+            }
+        }
+        return dp[n];
+    }
+
+    public boolean isInterleave(String s1, String s2, String s3) {
+        if (s1.length() + s2.length() != s3.length()) {
+            return false;
+        }
+        boolean[][] dp = new boolean[s1.length() + 1][s2.length() + 1];
+        dp[0][0] = true;
+        for (int i = 0; i <= s1.length(); i++) {
+            for (int j = 0; j <= s2.length(); j++) {
+                if (j > 0 && i == 0) {
+                    dp[i][j] = dp[i][j - 1] && s2.charAt(j - 1) == s3.charAt(i + j - 1);
+                } else if (j == 0 && i > 0) {
+                    dp[i][j] = dp[i - 1][j] && s1.charAt(i - 1) == s3.charAt(i + j - 1);
+                } else if (i > 0 && j > 0) {
+                    dp[i][j] = (dp[i - 1][j] && s1.charAt(i - 1) == s3.charAt(i + j - 1))
+                            || (dp[i][j - 1] && s2.charAt(j - 1) == s3.charAt(i + j - 1));
+                }
+            }
+        }
+        return dp[s1.length()][s2.length()];
+    }
+
+    public int maxProfit(int[] prices) {
+        int[] dp = new int[prices.length];
+        return dp[prices.length - 1];
+    }
+
+    /**
+     * 归并排序
+     */
+    public int reversePairs(int[] nums) {
+        int n = nums.length;
+        //临时排序数组
+        int[] dp = new int[n];
+        return mergeSort(nums, dp, 0, n - 1);
+    }
+
+    private int mergeSort(int[] nums, int[] dp, int l, int r) {
+        if (l >= r) {
+            return 0;
+        }
+        int mid = (l + r) / 2;
+        //归并排序,将数组一分为2个
+        int count = mergeSort(nums, dp, l, mid) + mergeSort(nums, dp, mid + 1, r);
+        int i = l, j = mid + 1, pos = l;
+        //两个数组往前比较
+        while (i <= mid && j <= r) {
+            //前与后比
+            if (nums[i] <= nums[j]) {
+                //第一位为小的
+                dp[pos] = nums[i];
+                i++;
+                count += (j - (mid + 1));
+            } else {
+                //否则后面小
+                dp[pos] = nums[j];
+                j++;
+            }
+            pos++;
+        }
+        for (int k = i; k <= mid; k++) {
+            dp[pos++] = nums[k];
+            count += (j - (mid + 1));
+        }
+        for (int k = j; k <= r; ++k) {
+            dp[pos++] = nums[k];
+        }
+        System.arraycopy(dp, l, nums, l, r + 1 - l);
+        return count;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().sortArrayByParity(new int[]{3, 1, 2, 4}));
+        System.out.println(new Dp().reversePairs(new int[]{7, 5, 6, 4}));
     }
 }
