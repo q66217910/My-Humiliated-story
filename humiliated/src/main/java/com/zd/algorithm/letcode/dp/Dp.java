@@ -1,6 +1,8 @@
 package com.zd.algorithm.letcode.dp;
 
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 
 public class Dp {
@@ -422,7 +424,85 @@ public class Dp {
         return count;
     }
 
+    public boolean isUnique(String astr) {
+        int[] dp = new int[127];
+        for (int i = 0; i < astr.length(); i++) {
+            dp[astr.charAt(i)]++;
+            if (dp[astr.charAt(i)] > 1) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public List<List<Integer>> permute(int[] nums) {
+        return permutes(nums, new ArrayList<>());
+    }
+
+    List<List<Integer>> result = new ArrayList<>();
+
+    public List<List<Integer>> permutes(int[] nums, List<Integer> list) {
+        for (int num : nums) {
+            if (!list.contains(num)) {
+                List<Integer> temp = new ArrayList<>(list);
+                temp.add(num);
+                if (temp.size() == nums.length) {
+                    result.add(temp);
+                } else {
+                    permutes(nums, temp);
+                }
+            }
+        }
+        return result;
+    }
+
+    public int minTime(int[] time, int m) {
+        if (time.length <= m) {
+            return 0;
+        }
+        int l = 0;
+        int r = Integer.MAX_VALUE;
+        while (l < r) {
+            int mid = (l + r) / 2;
+            if (canSplit(time, m, mid)) {
+                r = mid;
+            } else {
+                l = mid + 1;
+            }
+        }
+        return r;
+    }
+
+    private boolean canSplit(int[] time, int m, int k) {
+        int cnt = 0;
+        int sum = 0;
+        int maxT = 0;
+        for (int value : time) {
+            sum += value;
+            maxT = Math.max(maxT, value);
+            if (sum - maxT > k) {
+                if (++cnt == m) return false;
+                sum = value;
+                maxT = value;
+            }
+        }
+        return true;
+    }
+
+    public int expectNumber(int[] scores) {
+        Arrays.sort(scores);
+        int result = 1;
+        int temp = scores[0];
+        for (int score : scores) {
+            if (score != temp) {
+                result++;
+                temp = score;
+            }
+        }
+        return result;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().reversePairs(new int[]{7, 5, 6, 4}));
+        System.out.println(new Dp().minTime(new int[]{7, 6, 3, 1, 2, 4, 56, 8}, 2));
     }
 }
