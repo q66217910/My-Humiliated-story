@@ -502,7 +502,36 @@ public class Dp {
         return result;
     }
 
+    public int search(int[] nums, int target) {
+        int l = 0;
+        int r = nums.length - 1;
+        while (l <= r) {
+            int mid = (l + r) / 2;
+            if (nums[mid] == target) {
+                return mid;
+            }
+            //若mid位小于第一位,说明mid没有在旋转过的一边
+            if (nums[0] <= nums[mid]) {
+                //taget在0和mid之间
+                if (nums[0] <= target && target < nums[mid]) {
+                    r = mid - 1;
+                } else {
+                    l = mid + 1;
+                }
+            } else {
+                //mid在旋转过的一边
+                if (nums[mid] < target && target <= nums[nums.length - 1]) {
+                    //taget在mid和最后一位之间
+                    l = mid + 1;
+                } else {
+                    r = mid - 1;
+                }
+            }
+        }
+        return -1;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().minTime(new int[]{7, 6, 3, 1, 2, 4, 56, 8}, 2));
+        System.out.println(new Dp().search(new int[]{4, 5, 6, 7, 0, 1, 2}, 0));
     }
 }

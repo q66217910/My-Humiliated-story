@@ -1,5 +1,7 @@
 package com.zd.algorithm.find;
 
+import java.util.Arrays;
+
 /**
  * 二分查找法
  *
@@ -115,4 +117,5 @@ public class Dichotomy {
         }
         return right;
     }
+    
 }
