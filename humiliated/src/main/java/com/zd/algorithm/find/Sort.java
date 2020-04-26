@@ -47,6 +47,9 @@ public class Sort {
      * 插入排序
      */
     private int[] insSort(int[] nums) {
+        for (int i = 0; i < nums.length; i++) {
+
+        }
         return nums;
     }
 

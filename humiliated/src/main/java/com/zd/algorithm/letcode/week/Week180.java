@@ -765,8 +765,84 @@ public class Week180 {
         return rr * m + cc * n - rr * cc * 2;
     }
 
+    public int maxScore(String s) {
+        char[] chars = s.toCharArray();
+        int numO = 0;
+        int num1 = 0;
+        for (char aChar : chars) {
+            if (aChar == '0') {
+                numO++;
+            } else {
+                num1++;
+            }
+        }
+        int result = 0, a = 0, b = num1;
+        for (int i = 0; i < chars.length - 1; i++) {
+            if (chars[i] == '0') {
+                a++;
+            } else {
+                b--;
+            }
+            result = Math.max(result, a + b);
+        }
+        return result;
+    }
+
+    public int maxScore(int[] cardPoints, int k) {
+        if (k >= cardPoints.length) {
+            return (int) Arrays.stream(cardPoints).sum();
+        }
+        int temp = 0;
+        //先算k-0的和
+        for (int i = k - 1; i >= 0; i--) {
+            temp += cardPoints[i];
+        }
+        int result = temp;
+        //每次滑动1
+        for (int i = 1; i <= k; i++) {
+            temp = temp - cardPoints[k - i] + cardPoints[cardPoints.length - i];
+            result = Math.max(result, temp);
+        }
+        return result;
+    }
+
+    public int[] findDiagonalOrder(List<List<Integer>> nums) {
+        List<Point> list = new LinkedList<>();
+        for (int i = 0; i < nums.size(); i++) {
+            List<Integer> numList = nums.get(i);
+            for (int j = 0; j < numList.size(); j++) {
+                list.add(new Point(i, j, numList.get(j)));
+            }
+        }
+        Function<Point, Integer> function = p -> p.i + p.j;
+        return list.stream()
+                .sorted(Comparator.comparing(function).thenComparing(a -> a.j))
+                .mapToInt(Point::getValue)
+                .toArray();
+    }
+
+    public class Point {
+
+        private Integer i;
+        private Integer j;
+        private Integer value;
+
+        public Point(Integer i, Integer j, Integer value) {
+            this.i = i;
+            this.j = j;
+            this.value = value;
+        }
+
+        public Integer getValue() {
+            return value;
+        }
+    }
+
     public static void main(String[] args) {
-        new Week180().replaceElements(new int[]{
-                17, 18, 5, 4, 6, 1});
+        ArrayList<Integer> a = Lists.newArrayList(1, 2, 3);
+        ArrayList<Integer> b = Lists.newArrayList(4, 5, 6);
+        ArrayList<Integer> c = Lists.newArrayList(7, 8, 9);
+        List<List<Integer>> nums = Lists.newArrayList(a, b, c);
+        System.out.println(new Week180().findDiagonalOrder(nums));
     }
 }
