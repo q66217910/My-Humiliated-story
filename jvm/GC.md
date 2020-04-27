@@ -1,4 +1,4 @@
-GC
+`11 GC
 ===
 
 垃圾分类
@@ -7,6 +7,7 @@ GC
     强引用（StrongReference）：暂时不是垃圾，未来不确定
     软引用（SoftReference）：当内存不足，将它当成垃圾回收
     弱引用（WeakReference）：垃圾，由JVM中的垃圾回收器发现并回收
+    虚引用 (PhantomReference): 不能单独使用,必须和引用队列一起使用,跟踪对象被回收的状态。
     
 垃圾算法
 ---
