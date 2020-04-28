@@ -546,7 +546,51 @@ public class Dp {
         return l;
     }
 
+    /**
+     * 斐波那契数列
+     */
+    public int fib(int N) {
+        if (N == 0) {
+            return 0;
+        }
+        if (N == 1) {
+            return 1;
+        }
+        int[] dp = new int[N + 1];
+        dp[0] = 0;
+        dp[1] = 1;
+        for (int i = 2; i <= N; i++) {
+            dp[i] = dp[i - 1] + dp[i - 2];
+        }
+        return dp[N];
+    }
+
+    public double myPow(double x, int n) {
+        long m = n;
+        //把负数化为1/x的n次幂
+        if (m < 0) {
+            x = 1 / x;
+            m = -m;
+        }
+        //结果
+        double ans = 1;
+        //当前值
+        double cur = x;
+        for (long i = m; i > 0; i /= 2) {
+            if ((i % 2) == 1) {
+                ans = ans * cur;
+            }
+            cur = cur * cur;
+        }
+        return ans;
+    }
+
+    public int kthGrammar(int N, int K) {
+        if (N == 1) return 0;
+        return (~K & 1) ^ kthGrammar(N-1, (K+1)/2);
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().search(new int[]{4, 5, 6, 7, 0, 1, 2}, 0));
+        System.out.println(new Dp().kthGrammar(2,1));
     }
 }

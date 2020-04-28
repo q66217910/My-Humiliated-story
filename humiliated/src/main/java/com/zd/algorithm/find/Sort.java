@@ -140,8 +140,36 @@ public class Sort {
         return nums;
     }
 
+    /**
+     * 希尔排序
+     */
+    private int[] shellSort(int[] nums) {
+        int k = nums.length / 2;
+        while (k >= 1) {
+            shellSort(nums, k);
+            k /= 2;
+        }
+        return nums;
+    }
+
+    private void shellSort(int[] nums, int k) {
+        for (int i = k; i < nums.length; i++) {
+            //后面的数比前面的小
+            if (nums[i] < nums[i - k]) {
+                int j = 0;
+                //先记录下i的值
+                int temp = nums[i];
+                //全部后移k位(每隔k位后移直到i)
+                for (j = i - k; j >= 0 && temp < nums[j]; j = j - k) {
+                    nums[j + k] = nums[j];
+                }
+                //将后移结束留下的位置设置成num[i]
+                nums[j + k] = temp;
+            }
+        }
+    }
 
     public static void main(String[] args) {
-        System.out.println(new Sort().quickSort(new int[]{5, 4, 3, 2, 1}));
+        System.out.println(new Sort().shellSort(new int[]{5, 4, 3, 2, 1}));
     }
 }

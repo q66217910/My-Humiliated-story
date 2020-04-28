@@ -217,12 +217,28 @@ public class StringTool {
             int rest = n - i * 25;
             int a = rest / 10;
             int b = rest % 10 / 5;
-            ans = (int)(ans + (long)(a + 1) * (a + b + 1) % 1000000007) % 1000000007;
+            ans = (int) (ans + (long) (a + 1) * (a + b + 1) % 1000000007) % 1000000007;
         }
         return ans;
     }
 
+    /**
+     * 递归反转字符串
+     */
+    public void reverseString(char[] s) {
+        reverseString(s, 0);
+    }
+
+    private void reverseString(char[] s, int index) {
+        if (index == s.length) {
+            return;
+        }
+        char c = s[index];
+        reverseString(s, index + 1);
+        s[s.length - index - 1] = c;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new StringTool().waysToChange(10));
+        new StringTool().reverseString("1234".toCharArray());
     }
 }
