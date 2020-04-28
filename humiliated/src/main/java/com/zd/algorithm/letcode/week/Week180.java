@@ -821,6 +821,41 @@ public class Week180 {
                 .toArray();
     }
 
+    public int[] findDiagonalOrder(int[][] matrix) {
+        List<Point> list = new LinkedList<>();
+        for (int i = 0; i < matrix.length; i++) {
+            for (int j = 0; j < matrix[0].length; j++) {
+                list.add(new Point(i, j, matrix[i][j]));
+            }
+        }
+        return list.stream()
+                .sorted((a, b) -> {
+                    if (a.i + a.j > b.i + b.j) {
+                        return 1;
+                    } else if (a.i + a.j == b.i + b.j) {
+                        boolean flag = a.i > b.i;
+                        if ((a.i + a.j) % 2 == 1) {
+                            //偶数
+                            if (flag) {
+                                return 1;
+                            } else {
+                                return -1;
+                            }
+                        }else{
+                            if (flag) {
+                                return -1;
+                            } else {
+                                return 1;
+                            }
+                        }
+                    }
+                    return -1;
+                })
+                .mapToInt(Point::getValue)
+                .toArray();
+    }
+
+
     public class Point {
 
         private Integer i;

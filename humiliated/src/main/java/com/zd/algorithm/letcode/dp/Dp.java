@@ -1,5 +1,7 @@
 package com.zd.algorithm.letcode.dp;
 
+import com.google.common.collect.Lists;
+
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -587,10 +589,185 @@ public class Dp {
 
     public int kthGrammar(int N, int K) {
         if (N == 1) return 0;
-        return (~K & 1) ^ kthGrammar(N-1, (K+1)/2);
+        return (~K & 1) ^ kthGrammar(N - 1, (K + 1) / 2);
+    }
+
+    public int[] nextGreaterElement(int[] nums1, int[] nums2) {
+        int[] result = new int[nums1.length];
+        Map<Integer, Integer> map = new HashMap<>();
+        for (int i = 0; i < nums2.length; i++) {
+            for (int j = i; j < nums2.length; j++) {
+                if (nums2[j] > nums2[i]) {
+                    map.put(nums2[i], nums2[j]);
+                    break;
+                }
+            }
+        }
+        for (int i = 0; i < nums1.length; i++) {
+            result[i] = map.getOrDefault(nums1[i], -1);
+        }
+        return result;
+    }
+
+    public int[] singleNumbers(int[] nums) {
+        //计算两个数ab的异或值
+        int result = 0;
+        for (int i = 0; i < nums.length; i++) {
+            result ^= nums[i];
+        }
+        //结果中找到为1的位
+        int div = 1;
+        while ((div & result) == 0) {
+            div <<= 1;
+        }
+        //说明当前位 a为1，b为0，分组，再异或去重
+        int a = 0, b = 0;
+        for (int i = 0; i < nums.length; i++) {
+            if ((div & nums[i]) == 0) {
+                a ^= nums[i];
+            } else {
+                b ^= nums[i];
+            }
+        }
+        return new int[]{a, b};
+    }
+
+    public int pivotIndex(int[] nums) {
+        int sum = Arrays.stream(nums).sum();
+        int result = 0;
+        for (int i = 0; i < nums.length; i++) {
+            if ((sum - nums[i]) == 2 * result) {
+                return i;
+            }
+            result += nums[i];
+        }
+        return -1;
+    }
+
+    public int dominantIndex(int[] nums) {
+        //第一大的数和第二大的数
+        int max = nums[0], max2 = 0, index = 0;
+        for (int i = 1; i < nums.length; i++) {
+            if (nums[i] > max) {
+                max2 = max;
+                max = nums[i];
+                index = i;
+            } else {
+                max2 = Math.max(max2, nums[i]);
+            }
+        }
+        if (max >= 2 * max2) {
+            return index;
+        }
+        return -1;
+    }
+
+    public int[] plusOne(int[] digits) {
+        boolean ret = false;
+        for (int i = digits.length - 1; i >= 0; i--) {
+            if (digits[i] < 9) {
+                digits[i] = digits[i] + 1;
+                ret = false;
+                break;
+            } else {
+                digits[i] = 0;
+            }
+            ret = true;
+        }
+        if (ret) {
+            digits = new int[digits.length + 1];
+            digits[0] = 1;
+        }
+        return digits;
+    }
+
+    public List<Integer> spiralOrder(int[][] matrix) {
+        List<Integer> ret = new ArrayList<>();
+        int m = matrix.length;
+        if (m == 0) return ret;
+        int n = matrix[0].length;
+        int b = 0, t = m - 1, l = 0, r = n - 1;
+        while (true) {
+            for (int j = l; j <= r; j++) ret.add(matrix[b][j]);
+            if (++b > t) break;
+            for (int i = b; i <= t; i++) ret.add(matrix[i][r]);
+            if (--r < l) break;
+            for (int j = r; j >= l; j--) ret.add(matrix[t][j]);
+            if (--t < b) break;
+            for (int i = t; i >= b; i--) ret.add(matrix[i][l]);
+            if (++l > r) break;
+        }
+        return ret;
+    }
+
+    public int findInMountainArray(int target, List<Integer> mountainArr) {
+        int size = mountainArr.size();
+        // 步骤 1：先找到山顶元素所在的索引
+        int mountaintop = findMountaintop(mountainArr, 0, size - 1);
+        // 步骤 2：在前有序且升序数组中找 target 所在的索引
+        int res = findFromSortedArr(mountainArr, 0, mountaintop, target);
+        if (res != -1) {
+            return res;
+        }
+        // 步骤 3：如果步骤 2 找不到，就在后有序且降序数组中找 target 所在的索引
+        return findFromInversedArr(mountainArr, mountaintop + 1, size - 1, target);
+    }
+
+    private int findFromInversedArr(List<Integer> mountainArr, int l, int r, int target) {
+        // 在后有序且降序数组中找 target 所在的索引
+        while (l < r) {
+            int mid = l + (r - l) / 2;
+            // 与 findFromSortedArr 方法不同的地方仅仅在于由原来的小于号改成大于好
+            if (mountainArr.get(mid) > target) {
+                l = mid + 1;
+            } else {
+                r = mid;
+            }
+
+        }
+        // 因为不确定区间收缩成 1个数以后，这个数是不是要找的数，因此单独做一次判断
+        if (mountainArr.get(l) == target) {
+            return l;
+        }
+        return -1;
+    }
+
+    private int findFromSortedArr(List<Integer> mountainArr, int l, int r, int target) {
+        // 在前有序且升序数组中找 target 所在的索引
+        while (l < r) {
+            int mid = l + (r - l) / 2;
+            if (mountainArr.get(mid) < target) {
+                l = mid + 1;
+            } else {
+                r = mid;
+            }
+
+        }
+        // 因为不确定区间收缩成 1个数以后，这个数是不是要找的数，因此单独做一次判断
+        if (mountainArr.get(l) == target) {
+            return l;
+        }
+        return -1;
+    }
+
+    private int findMountaintop(List<Integer> mountainArr, int l, int r) {
+        // 返回山顶元素
+        while (l < r) {
+            int mid = l + (r - l) / 2;
+            // 取左中位数，因为进入循环，数组一定至少有 2 个元素
+            // 因此，左中位数一定有右边元素，数组下标不会发生越界
+            if (mountainArr.get(mid) < mountainArr.get(mid + 1)) {
+                // 如果当前的数比右边的数小，它一定不是山顶
+                l = mid + 1;
+            } else {
+                r = mid;
+            }
+        }
+        // 根据题意，山顶元素一定存在，因此退出 while 循环的时候，不用再单独作判断
+        return l;
     }
 
     public static void main(String[] args) {
-        System.out.println(new Dp().kthGrammar(2,1));
+        System.out.println(new Dp().findInMountainArray(2, Lists.newArrayList(1,5,2)));
     }
 }
