@@ -238,7 +238,126 @@ public class StringTool {
         s[s.length - index - 1] = c;
     }
 
+    /**
+     * 二进制求和
+     */
+    public String addBinary(String a, String b) {
+        //保证a是长的
+        if (b.length() > a.length()) {
+            String temp = a;
+            a = b;
+            b = temp;
+        }
+        StringBuilder sb = new StringBuilder();
+        int carry = 0;
+        for (int i = a.length() - 1, j = b.length() - 1; i >= 0; i--, j--) {
+            char d = '0';
+            char c = a.charAt(i);
+            if (j >= 0) {
+                d = b.charAt(j);
+            }
+            int value = (c - '0') + (d - '0') + carry;
+            if (value >= 2) {
+                //进位
+                carry = 1;
+            } else {
+                carry = 0;
+            }
+            sb.append(value % 2);
+        }
+        if (carry > 0) {
+            sb.append(1);
+        }
+        return sb.reverse().toString();
+    }
+
+    /**
+     * 连续1最大数
+     */
+    public int findMaxConsecutiveOnes(int[] nums) {
+        int result = 0, temp = 0;
+        for (int i = 0; i < nums.length; i++) {
+            if (nums[i] > 0) {
+                temp++;
+            } else {
+                result = Math.max(result, temp);
+                temp = 0;
+            }
+        }
+        result = Math.max(result, temp);
+        return result;
+    }
+
+    public int minSubArrayLen(int s, int[] nums) {
+        int n = nums.length;
+        int ans = Integer.MAX_VALUE;
+        int left = 0;
+        int sum = 0;
+        for (int i = 0; i < n; i++) {
+            sum += nums[i];
+            while (sum >= s) {
+                ans = Math.min(ans, i + 1 - left);
+                sum -= nums[left++];
+            }
+        }
+        return (ans != Integer.MAX_VALUE) ? ans : 0;
+    }
+
+    public String reverseWords(String s) {
+        char[] cs = s.toCharArray();
+        int j = 0;
+        for (int i = 0; i < cs.length; i++) {
+            if (cs[i] == ' ' || i == cs.length - 1) {
+                int k = i;
+                if (cs[i] == ' ') {
+                    k--;
+                }
+                //遇到空格,反转前面的数组
+                while (j < k) {
+                    cs[k] ^= cs[j];
+                    cs[j] ^= cs[k];
+                    cs[k] ^= cs[j];
+                    j++;
+                    k--;
+                }
+                //交换结束
+                j = i + 1;
+            }
+        }
+        return new String(cs);
+    }
+
+    /**
+     * 数独
+     */
+    public boolean isValidSudoku(char[][] board) {
+        char[][] cs = new char[10][10];
+        char[][] ca = new char[10][10];
+        char[][][] ka = new char[3][3][10];
+        int k = 0;
+        for (int i = 0; i < board.length; i++) {
+            for (int j = 0; j < board[0].length; j++) {
+                if (board[i][j] == '.') {
+                    continue;
+                }
+                cs[i][board[i][j] - '0']++;
+                if (cs[i][board[i][j] - '0'] > 1) {
+                    return false;
+                }
+                ca[board[i][j] - '0'][j]++;
+                if (ca[board[i][j] - '0'][j] > 1) {
+                    return false;
+                }
+                ka[i / 3][j / 3][board[i][j] - '0']++;
+                if (ka[i / 3][j / 3][board[i][j] - '0'] > 1) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     public static void main(String[] args) {
-        new StringTool().reverseString("1234".toCharArray());
+        System.out.println(new StringTool().reverseWords("Let's take LeetCode contest"));
     }
 }
