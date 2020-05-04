@@ -48,6 +48,8 @@ public class StackQueue<T> {
         return this.stackOut.pop();
     }
 
+
+
     private void inToOut() {
         while (!this.stackIn.isEmpty()) {
             this.stackOut.push(this.stackIn.pop());

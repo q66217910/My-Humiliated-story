@@ -201,7 +201,7 @@ public class Dp {
         int m = matrix[0].length;
         int[][] result = new int[n][m];
         for (int[] ints : result) {
-            Arrays.fill(ints, Integer.MAX_VALUE);
+            Arrays.fill(ints, 99);
         }
         //元素为0的距离一定为0
         for (int i = 0; i < n; ++i) {
@@ -767,7 +767,64 @@ public class Dp {
         return l;
     }
 
+    public int evalRPN(String[] tokens) {
+        if (tokens.length == 1) {
+            return Integer.parseInt(tokens[0]);
+        }
+        Stack<Integer> stack = new Stack<>();
+        int result = 0;
+        for (String token : tokens) {
+            switch (token) {
+                case "+":
+                    int a = stack.pop();
+                    int b = stack.pop();
+                    result = a + b;
+                    stack.push(result);
+                    break;
+                case "-":
+                    a = stack.pop();
+                    b = stack.pop();
+                    result = b - a;
+                    stack.push(result);
+                    break;
+                case "*":
+                    a = stack.pop();
+                    b = stack.pop();
+                    result = a * b;
+                    stack.push(result);
+                    break;
+                case "/":
+                    a = stack.pop();
+                    b = stack.pop();
+                    result = b / a;
+                    stack.push(result);
+                    break;
+                default:
+                    stack.push(Integer.parseInt(token));
+            }
+        }
+        return result;
+    }
+
+    public int jump(int[] nums) {
+        //既然我们肯定可以到达最后的位置，dp[]用来记录到达当前位置的最小跳跃数
+        if(nums.length<2)return 0;
+        int[] dp=new int[nums.length];
+        dp[0]=0;
+        for(int i=0;i<nums.length;i++){
+            for(int j=0;j<i;j++){
+                if(dp[j]>=0&&nums[j]+j>=i){
+                    //有个技巧可以利用，就是我们从左往右第一个能够跳到i处位置的一定是最小跳跃数的
+                    dp[i]=dp[j]+1;
+                    break;
+                }
+
+            }
+        }
+        return dp[nums.length-1];
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().findInMountainArray(2, Lists.newArrayList(1,5,2)));
+        System.out.println(new Dp().jump(new int[]{2, 1}));
     }
 }

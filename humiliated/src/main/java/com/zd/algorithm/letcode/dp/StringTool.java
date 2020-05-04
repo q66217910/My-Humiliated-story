@@ -1,9 +1,9 @@
 package com.zd.algorithm.letcode.dp;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Stack;
+import java.lang.reflect.Array;
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 public class StringTool {
@@ -357,7 +357,327 @@ public class StringTool {
         return true;
     }
 
+    public int lengthOfLongestSubstring(String s) {
+        List<Character> list = new ArrayList<>();
+        int result = 0;
+        for (char c : s.toCharArray()) {
+            if (list.contains(c)) {
+                result = Math.max(result, list.size());
+                list = list.subList(list.indexOf(c) + 1, list.size());
+            }
+            list.add(c);
+        }
+        result = Math.max(result, list.size());
+        return result;
+    }
+
+    public String[] findRestaurant(String[] list1, String[] list2) {
+        HashMap<Integer, List<String>> map = new HashMap<>();
+        for (int i = 0; i < list1.length; i++) {
+            for (int j = 0; j < list2.length; j++) {
+                if (list1[i].equals(list2[j])) {
+                    if (!map.containsKey(i + j))
+                        map.put(i + j, new ArrayList<String>());
+                    map.get(i + j).add(list1[i]);
+                }
+            }
+        }
+        int min_index_sum = Integer.MAX_VALUE;
+        for (int key : map.keySet())
+            min_index_sum = Math.min(min_index_sum, key);
+        String[] res = new String[map.get(min_index_sum).size()];
+        return map.get(min_index_sum).toArray(res);
+    }
+
+    public List<Boolean> kidsWithCandies(int[] candies, int extraCandies) {
+        int max = Arrays.stream(candies).max().getAsInt();
+        return Arrays.stream(candies)
+                .boxed()
+                .map(a -> a + extraCandies > max)
+                .collect(Collectors.toList());
+    }
+
+    public int maxDiff(int num) {
+        String s = String.valueOf(num);
+        int a = num, b = num;
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) != '9') {
+                a = Integer.parseInt(s.replace(s.charAt(i), '9'));
+                break;
+            }
+        }
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(0) != '1') {
+                b = Integer.parseInt(s.replace(s.charAt(0), '1'));
+                break;
+            } else if (i > 0 && s.charAt(i) > '1') {
+                b = Integer.parseInt(s.replace(s.charAt(i), '0'));
+                break;
+            }
+        }
+        return a - b;
+    }
+
+    public boolean checkIfCanBreak(String s1, String s2) {
+        char[] c1 = s1.toCharArray();
+        char[] c2 = s2.toCharArray();
+        Arrays.sort(c1);
+        Arrays.sort(c2);
+        //a全部c1>=c2
+        boolean a = true, b = true;
+        for (int i = 0; i < c1.length; i++) {
+            if (c1[i] < c2[i]) {
+                a = false;
+            }
+            if (c2[i] < c1[i]) {
+                b = false;
+            }
+        }
+        return a || b;
+    }
+
+    public int numberWays(List<List<Integer>> hats) {
+        //dp为帽子，有几个人能戴
+        int[] peoples = new int[40];
+        int p = 1;
+        //一共10个人,最多10位，没一位1代表一个人
+        for (List<Integer> hat : hats) {
+            for (Integer h : hat) {
+                peoples[h - 1] |= p;
+            }
+            p <<= 1;
+        }
+
+        //人数
+        int[] dp = new int[p];
+        dp[0] = 1;
+        for (int people : peoples) {
+            //0说明这个帽子没人愿意带
+            if (people == 0) {
+                continue;
+            }
+            //有人愿意带的帽子
+            for (int status = p; status > 0; status--) {
+                //每位取出
+                for (int mask = people & status, pp = 0; mask > 0; mask ^= pp) {
+                    //哪一位
+                    pp = (-mask) & mask;
+                    dp[status] = (dp[status ^ pp] + dp[status]) % 1000000007;
+                }
+            }
+        }
+        return dp[p - 1];
+    }
+
+    public String destCity(List<List<String>> paths) {
+        Map<String, Long> a = paths.stream().collect(Collectors.groupingBy(list -> list.get(0), Collectors.counting()));
+        for (List<String> path : paths) {
+            if (!a.containsKey(path.get(1))) {
+                return path.get(1);
+            }
+        }
+        return "";
+    }
+
+    public boolean kLengthApart(int[] nums, int k) {
+        //上一个
+        int last = -1;
+        for (int i = 0; i < nums.length; i++) {
+            if (nums[i] == 1) {
+                if (last < 0) {
+                    last = i;
+                } else {
+                    if (i - last - 1 < k) {
+                        return false;
+                    }
+                    last = i;
+                }
+            }
+        }
+        return true;
+    }
+
+    public int longestSubarray(int[] nums, int limit) {
+        TreeMap<Integer, Integer> tree = new TreeMap<>(Integer::compareTo);
+        int l = 0, max = 0, r = 1;
+        tree.put(nums[0], 1);
+        for (; r < nums.length; r++) {
+            int key = nums[r];
+            tree.compute(key, (k, v) -> v == null ? 1 : v + 1);
+            if (Math.abs(tree.lastKey() - tree.firstKey()) > limit) {
+                max = Math.max(r - l, max);
+                while (Math.abs(tree.lastKey() - tree.firstKey()) > limit) {
+                    key = nums[l++];
+                    if (tree.get(key) > 1) {
+                        tree.put(key, tree.get(key) - 1);
+                    } else {
+                        tree.remove(key);
+                    }
+                }
+            }
+        }
+        max = Math.max(r - l, max);
+        return max;
+    }
+
+    public int kthSmallest(int[][] mat, int k) {
+        //最小和
+        int sum = 0;
+        for (int i = 0; i < mat.length; i++) {
+            sum += mat[i][0];
+        }
+        PriorityQueue<Item> pq = new PriorityQueue<>(Comparator.comparingInt(o -> o.total));
+        Set<String> visit = new HashSet<>();
+        Item first = new Item(new int[mat.length], sum);
+        visit.add(Arrays.toString(first.pick));
+        pq.offer(first);
+        while (k > 1) {
+            Item item = pq.poll();
+            for (int i = 0; i < mat.length; i++) {
+                item.pick[i]++;
+                if (item.pick[i] < mat[i].length && !visit.contains(Arrays.toString(item.pick))) {
+                    visit.add(Arrays.toString(item.pick));
+                    int[] pick = Arrays.copyOf(item.pick, item.pick.length);
+
+                    int total = item.total - mat[i][item.pick[i] - 1] + mat[i][item.pick[i]];
+                    pq.add(new Item(pick, total));
+                }
+
+                item.pick[i]--;
+            }
+            k--;
+        }
+        return pq.peek().total;
+    }
+
+    private class Item {
+        private int[] pick;
+        private int total;
+
+        public Item(int[] pick, int total) {
+            this.pick = pick;
+            this.total = total;
+        }
+
+    }
+
+    public boolean containsNearbyDuplicate(int[] nums, int k) {
+        Map<Integer, Integer> map = new HashMap<>();
+        for (int i = 0; i < nums.length; i++) {
+            if (map.containsKey(nums[i])) {
+                if (i - map.get(nums[i]) <= k) {
+                    return true;
+                }
+            }
+            map.put(nums[i], i);
+        }
+        return false;
+    }
+
+    public List<List<String>> groupAnagrams(String[] strs) {
+        return new ArrayList<>(Arrays.stream(strs).collect(Collectors.groupingBy(s -> {
+            char[] chars = s.toCharArray();
+            Arrays.sort(chars);
+            return new String(chars);
+        })).values());
+    }
+
+    public int fourSumCount(int[] A, int[] B, int[] C, int[] D) {
+        int result = 0;
+        Map<Integer, Integer> map = new HashMap<>();
+        for (int item : A) {
+            for (int value : B) {
+                map.compute(item + value, (k, v) -> v == null ? 1 : v + 1);
+            }
+        }
+        for (int item : C) {
+            for (int value : D) {
+                if (map.containsKey(-(item + value))) {
+                    result += map.get(-(item + value));
+                }
+            }
+        }
+        return result;
+    }
+
+
+    public int[] topKFrequent(int[] nums, int k) {
+        return Arrays.stream(nums)
+                .boxed()
+                .collect(Collectors
+                        .groupingBy(Function.identity(), Collectors.counting()))
+                .entrySet()
+                .stream()
+                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+                .limit(k)
+                .mapToInt(Map.Entry::getKey)
+                .toArray();
+    }
+
+    public int search(int[] nums, int target) {
+        int l = 0;
+        int r = nums.length - 1;
+        while (l <= r) {
+            int mid = (l + r) / 2;
+            if (nums[mid] == target) {
+                return mid;
+            } else if (nums[mid] > target) {
+                r = mid - 1;
+            } else {
+                l = mid + 1;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * 寻找峰值
+     */
+    public int findPeakElement(int[] nums) {
+        int l = 0;
+        int r = nums.length - 1;
+        while (l <= r) {
+            int mid = (l + r) / 2;
+            if ((mid == 0 || nums[mid] > nums[mid - 1]) && (mid == nums.length - 1 || nums[mid] > nums[mid + 1])) {
+                return mid;
+            }
+            if (mid == 0 || nums[mid] > nums[mid - 1]) {
+                //前半段
+                l = mid + 1;
+            } else {
+                //后半段
+                r = mid - 1;
+            }
+        }
+        return -1;
+    }
+
+    public int findMin(int[] nums) {
+        if (nums.length == 1) {
+            return nums[0];
+        }
+        int left = 0, right = nums.length - 1;
+        if (nums[right] > nums[0]) {
+            return nums[0];
+        }
+        while (right >= left) {
+            int mid = left + (right - left) / 2;
+            if (nums[mid] > nums[mid + 1]) {
+                return nums[mid + 1];
+            }
+            if (nums[mid - 1] > nums[mid]) {
+                return nums[mid];
+            }
+            if (nums[mid] > nums[0]) {
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
+        }
+        return -1;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new StringTool().reverseWords("Let's take LeetCode contest"));
+        System.out.println(new StringTool().findMin(new int[]{1,2,3}));
     }
 }
