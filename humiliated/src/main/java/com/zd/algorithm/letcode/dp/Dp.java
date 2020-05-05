@@ -808,23 +808,53 @@ public class Dp {
 
     public int jump(int[] nums) {
         //既然我们肯定可以到达最后的位置，dp[]用来记录到达当前位置的最小跳跃数
-        if(nums.length<2)return 0;
-        int[] dp=new int[nums.length];
-        dp[0]=0;
-        for(int i=0;i<nums.length;i++){
-            for(int j=0;j<i;j++){
-                if(dp[j]>=0&&nums[j]+j>=i){
+        if (nums.length < 2) return 0;
+        int[] dp = new int[nums.length];
+        dp[0] = 0;
+        for (int i = 0; i < nums.length; i++) {
+            for (int j = 0; j < i; j++) {
+                if (dp[j] >= 0 && nums[j] + j >= i) {
                     //有个技巧可以利用，就是我们从左往右第一个能够跳到i处位置的一定是最小跳跃数的
-                    dp[i]=dp[j]+1;
+                    dp[i] = dp[j] + 1;
                     break;
                 }
 
             }
         }
-        return dp[nums.length-1];
+        return dp[nums.length - 1];
     }
 
+    public int mincostTickets(int[] days, int[] costs) {
+        //票可以买的日期
+        int[] durations = new int[]{1, 7, 30};
+        //最低价
+        int[] low = new int[]{Math.min(Math.min(costs[0], costs[1]), costs[2]), Math.min(costs[1], costs[2]), costs[2]};
+        int[] dp = new int[days.length];
+        //dp[0] 为最低票价 （防止7天 30天最低情况）
+        dp[0] = Math.min(Math.min(costs[0], costs[1]), costs[2]);
+        for (int i = 1; i < days.length; i++) {
+            //最近1天、最近7内、最近30天分别+他们的上一次，的最小值，就是当前天数的最小值
+            //直接买一天的票
+            dp[i] = dp[i - 1] + low[0];
+            //买7天或者30天的
+            for (int k = 1; k < 3; k++) {
+                //记录上一次的值(感觉可以优化，可以从后往前遍历找)
+                int temp = 0;
+                for (int j = 0; j < i; j++) {
+                    //最近7天内,或30天内
+                    if (days[i] - days[j] >= durations[k]) {
+                        temp = dp[j];
+                    }
+
+                }
+                dp[i] = Math.min(dp[i], temp + low[k]);
+            }
+        }
+        return dp[days.length - 1];
+    }
+
+
     public static void main(String[] args) {
-        System.out.println(new Dp().jump(new int[]{2, 1}));
+        System.out.println(new Dp().mincostTickets(new int[]{1, 4, 6, 7, 8, 20}, new int[]{2, 7, 15}));
     }
 }
