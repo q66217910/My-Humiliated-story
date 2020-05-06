@@ -1,10 +1,14 @@
 package com.zd.algorithm.letcode.dp;
 
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 public class StringTool {
 
@@ -775,6 +779,20 @@ public class StringTool {
             }
         }
         return nums[l];
+    }
+
+    public int firstUniqChar(String s) {
+        char[] chars = s.toCharArray();
+        Map<Character, Long> collect = IntStream.range(0, s.length())
+                .boxed()
+                .map(i -> chars[i])
+                .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+        for (int i = 0; i < chars.length; i++) {
+            if (collect.get(chars[i]) == 1) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     public static void main(String[] args) {

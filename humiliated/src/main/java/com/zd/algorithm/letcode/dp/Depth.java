@@ -167,6 +167,80 @@ public class Depth {
         return ((num & 0xaaaaaaaa) >> 1) | ((num & 0x55555555) << 1);
     }
 
+
+    public int openLock(String[] deadends, String target) {
+        List<String> codes = Arrays.stream(deadends).collect(Collectors.toList());
+        Queue<String> queue = new LinkedList<>();
+        Set<String> set = new HashSet<>();
+        int[] a = {1, -1};
+        queue.add("0000");
+        int i = 0;
+        while (!queue.isEmpty()) {
+            int size = queue.size();
+            for (int k = 0; k < size; k++) {
+                String value = queue.poll();
+                if (!codes.contains(value)) {
+                    if (value.equals(target)) {
+                        return i;
+                    }
+                    //改变
+                    for (int j = 0; j < target.length(); j++) {
+                        for (int item : a) {
+                            char[] chars = Arrays.copyOf(value.toCharArray(), value.length());
+                            if (item == -1 && chars[j] == '0') {
+                                chars[j] = '9';
+                            } else if (item == 1 && chars[j] == '9') {
+                                chars[j] = '0';
+                            } else {
+                                chars[j] += item;
+                            }
+                            String s = new String(chars);
+                            if (!set.contains(s)) {
+                                set.add(s);
+                                queue.add(s);
+                            }
+                        }
+                    }
+                }
+            }
+            i++;
+        }
+        return -1;
+    }
+
+    public int numSquares(int n) {
+        int[] dp = new int[n + 1];
+        Arrays.fill(dp, Integer.MAX_VALUE);
+        dp[0] = 0;
+        int index = (int) Math.sqrt(n) + 1;
+        int[] squares = new int[index];
+        //所有可能平方的值
+        for (int i = 1; i < index; i++) {
+            squares[i] = i * i;
+        }
+        for (int i = 1; i <= n; ++i) {
+            for (int j = 1; j < index; j++) {
+                if (i < squares[j]) break;
+                dp[i] = Math.min(dp[i], dp[i - squares[j]] + 1);
+            }
+        }
+        return dp[n];
+    }
+
+    public int[] dailyTemperatures(int[] T) {
+        int[] result = new int[T.length];
+        Stack<Integer> stack = new Stack<>();
+        for (int i = T.length - 1; i >= 0; i--) {
+            //栈中压出比当前数小的
+            while (!stack.isEmpty() && T[i] >= T[stack.peek()]) {
+                stack.pop();
+            }
+            result[i] = stack.isEmpty() ? 0 : stack.peek() - i;
+            stack.push(i);
+        }
+        return result;
+    }
+
     class Node {
         public int val;
         public List<Node> neighbors;
@@ -325,8 +399,9 @@ public class Depth {
         return false;
     }
 
-    
+
     public static void main(String[] args) {
         System.out.println(new Depth().floodFill(new int[][]{{1, 1, 1}, {1, 1, 0}, {1, 0, 1}}, 1, 1, 2));
+        System.out.println(new Depth().openLock(new String[]{"0201", "0101", "0102", "1212", "2002"}, "0202"));
     }
 }
