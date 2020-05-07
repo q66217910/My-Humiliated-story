@@ -853,7 +853,6 @@ public class Dp {
         return dp[days.length - 1];
     }
 
-
     public static void main(String[] args) {
         System.out.println(new Dp().mincostTickets(new int[]{1, 4, 6, 7, 8, 20}, new int[]{2, 7, 15}));
     }

@@ -399,9 +399,59 @@ public class Depth {
         return false;
     }
 
+    public int maximalSquare(char[][] matrix) {
+        if (matrix.length == 0) return 0;
+        int m = matrix.length;
+        int n = matrix[0].length;
+
+        //初始化边界dp
+        int[] left = new int[n];
+        int[] right = new int[n];
+        int[] height = new int[n];
+
+        //右边界默认最大值
+        Arrays.fill(right, n);
+
+        int maxArea = 0;
+        for (char[] chars : matrix) {
+            int curLeft = 0, curRight = n;
+            for (int j = 0; j < n; j++) {
+                //左边界取 当前和历史左边界最大值
+                if (chars[j] == '1') {
+                    left[j] = Math.max(left[j], curLeft);
+                } else {
+                    left[j] = 0;
+                    curLeft = j + 1;
+                }
+            }
+            for (int j = n - 1; j >= 0; j--) {
+                //右边界
+                if (chars[j] == '1') {
+                    right[j] = Math.min(right[j], curRight);
+                } else {
+                    right[j] = n;
+                    curRight = j;
+                }
+            }
+            for (int j = 0; j < n; j++) {
+                //算每个i行j的高度
+                if (chars[j] == '1') {
+                    height[j]++;
+                } else {
+                    height[j] = 0;
+                }
+            }
+
+            for (int j = 0; j < n; j++) {
+                int value = Math.min((right[j] - left[j]), height[j]);
+                maxArea = Math.max(maxArea, value * value);
+            }
+        }
+        return maxArea;
+    }
+
 
     public static void main(String[] args) {
-        System.out.println(new Depth().floodFill(new int[][]{{1, 1, 1}, {1, 1, 0}, {1, 0, 1}}, 1, 1, 2));
-        System.out.println(new Depth().openLock(new String[]{"0201", "0101", "0102", "1212", "2002"}, "0202"));
+        System.out.println(new Depth().maximalSquare(new char[][]{{'1', '0', '1', '0', '0'}, {'1', '0', '1', '1', '1'}, {'1', '1', '1', '1', '1'}, {'1', '0', '0', '1', '0'}}));
     }
 }
