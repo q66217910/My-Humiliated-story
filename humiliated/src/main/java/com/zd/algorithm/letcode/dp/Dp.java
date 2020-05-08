@@ -1,10 +1,6 @@
 package com.zd.algorithm.letcode.dp;
 
-import com.google.common.collect.Lists;
-
 import java.util.*;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 
 public class Dp {
@@ -851,6 +847,19 @@ public class Dp {
             }
         }
         return dp[days.length - 1];
+    }
+
+    public List<List<Integer>> subsets(int[] nums) {
+        List<List<Integer>> list = new ArrayList<>();
+        list.add(new ArrayList<>());
+        for (int num : nums) {
+            for (List<Integer> value : new ArrayList<>(list)) {
+                List<Integer> temp = new ArrayList<>(value);
+                temp.add(num);
+                list.add(temp);
+            }
+        }
+        return list;
     }
 
     public static void main(String[] args) {
