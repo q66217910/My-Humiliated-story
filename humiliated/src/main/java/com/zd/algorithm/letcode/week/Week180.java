@@ -841,7 +841,7 @@ public class Week180 {
                             } else {
                                 return -1;
                             }
-                        }else{
+                        } else {
                             if (flag) {
                                 return -1;
                             } else {
@@ -855,6 +855,124 @@ public class Week180 {
                 .toArray();
     }
 
+    public List<String> buildArray(int[] target, int n) {
+        List<String> list = new ArrayList<>();
+        int j = 0;
+        for (int value : target) {
+            while (j + 1 < value) {
+                list.add("Push");
+                list.add("Pop");
+                j++;
+            }
+            list.add("Push");
+            j++;
+        }
+        return list;
+    }
+
+    public int countTriplets(int[] arr) {
+        int result = 0;
+        int[] dp = new int[arr.length];
+        dp[0] = arr[0];
+        for (int i = 1; i < arr.length; i++) {
+            dp[i] = dp[i - 1] ^ arr[i];
+        }
+        for (int i = 0; i < arr.length; i++) {
+            int value = dp[i];
+            if (value == 0) {
+                result += i;
+            }
+            for (int j = 1; j <= i; j++) {
+                value ^= arr[j - 1];
+                if (value == 0) {
+                    result += (i - j);
+                }
+            }
+        }
+        return result;
+    }
+
+    public int minTime(int n, int[][] edges, List<Boolean> hasApple) {
+        Map<Integer, Integer> map = Arrays.stream(edges).collect(Collectors.toMap(arr -> arr[1], arr -> arr[0]));
+        //有苹果的节点
+        List<Integer> values = new ArrayList<>();
+        for (int i = 0; i < hasApple.size(); i++) {
+            if (hasApple.get(i)) {
+                values.add(i);
+            }
+        }
+        //经过路径
+        Set<Integer> set = new HashSet<>();
+        for (Integer value : values) {
+            int temp = value;
+            while (temp > 0) {
+                if (set.contains(temp)) {
+                    break;
+                }
+                set.add(temp);
+                temp = map.get(temp);
+            }
+        }
+        return set.size() * 2;
+    }
+
+    public int ways(String[] pizza, int k) {
+        int m = pizza.length;
+        int n = pizza[0].toCharArray().length;
+        int mod = (int) (Math.pow(10, 9) + 7);
+        //苹果的总数
+        int[][] nums = new int[m][n];
+        //mn的刀的方案数
+        int[][][] dp = new int[m][n][k];
+
+        //初始化nums
+        for (int i = m - 1; i >= 0; i--) {
+            for (int j = n - 1; j >= 0; j--) {
+                int hasApple = pizza[i].charAt(j) == 'A' ? 1 : 0;
+                if (i == m - 1 && j == n - 1) {
+                    //切到最后一个,有就是有没有就没有
+                    nums[i][j] = hasApple;
+                } else if (i == m - 1) {
+                    //最后一行
+                    nums[i][j] = hasApple + nums[i][j + 1];
+                } else if (j == n - 1) {
+                    //最后一列
+                    nums[i][j] = hasApple + nums[i + 1][j];
+                } else {
+                    //剩下的,当前的加上行与列,减去重复的
+                    nums[i][j] = hasApple + nums[i + 1][j] + nums[i][j + 1] - nums[i + 1][j + 1];
+                }
+            }
+        }
+
+        //计算dp
+        for (int i = m - 1; i >= 0; i--) {
+            for (int j = n - 1; j >= 0; j--) {
+                if (nums[i][j] > 0) {
+                    //初始化第0刀,只要有苹果
+                    dp[i][j][0] = 1;
+                }
+                for (int p = 1; p < k; p++) {
+                    //每一刀
+                    for (int x = i + 1; x < m; x++) {
+                        //当前刀横切
+                        if (nums[i][j] - nums[x][j] > 0) {
+                            dp[i][j][p] += dp[x][j][p - 1] % mod;
+                            dp[i][j][p] = dp[i][j][p] % mod;
+                        }
+                    }
+                    for (int y = j + 1; y < n; y++) {
+                        //当前刀竖切
+                        if (nums[i][j] - nums[i][y] > 0) {
+                            dp[i][j][p] += dp[i][y][p - 1] % mod;
+                            dp[i][j][p] = dp[i][j][p] % mod;
+                        }
+                    }
+                }
+            }
+        }
+        return dp[0][0][k - 1] % mod;
+    }
 
     public class Point {
 
@@ -874,10 +992,6 @@ public class Week180 {
     }
 
     public static void main(String[] args) {
-        ArrayList<Integer> a = Lists.newArrayList(1, 2, 3);
-        ArrayList<Integer> b = Lists.newArrayList(4, 5, 6);
-        ArrayList<Integer> c = Lists.newArrayList(7, 8, 9);
-        List<List<Integer>> nums = Lists.newArrayList(a, b, c);
-        System.out.println(new Week180().findDiagonalOrder(nums));
+        System.out.println(new Week180().ways(new String[]{"A..", "AAA", "..."}, 3));
     }
 }

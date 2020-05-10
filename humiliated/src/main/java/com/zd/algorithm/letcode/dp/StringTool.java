@@ -795,7 +795,136 @@ public class StringTool {
         return -1;
     }
 
+    public String frequencySort(String s) {
+        Map<Character, Integer> map = new HashMap<>();
+        for (char c : s.toCharArray()) {
+            map.put(c, map.getOrDefault(c, 0) + 1);
+        }
+        return map.entrySet()
+                .stream()
+                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+                .map(entry -> {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < entry.getValue(); i++) {
+                        sb.append(entry.getKey());
+                    }
+                    return sb.toString();
+                }).collect(Collectors.joining());
+    }
+
+    public List<List<Integer>> threeSum(int[] nums) {
+        Arrays.sort(nums);
+        List<List<Integer>> list = new ArrayList<>();
+        for (int i = 0; i < nums.length; i++) {
+            int target = -nums[i];
+            int l = i + 1, r = nums.length - 1;
+            //当前值大于0说明和必大于0
+            if (nums[i] > 0) break;
+            if (i > 0 && nums[i] == nums[i - 1]) continue;
+            while (l < r) {
+                int s = nums[i] + nums[l] + nums[r];
+                if (s == 0) {
+                    List<Integer> value = new ArrayList<>();
+                    value.add(nums[i]);
+                    value.add(nums[l]);
+                    value.add(nums[r]);
+                    list.add(value);
+                    while (l + 1 < r && nums[l] == nums[l + 1]) l++;
+                    while (l < r - 1 && nums[r] == nums[r - 1]) r--;
+                    l++;
+                    r--;
+                } else if (s < 0) {
+                    l++;
+                } else {
+                    r--;
+                }
+            }
+        }
+        return list;
+    }
+
+    public List<List<Integer>> fourSum(int[] nums, int target) {
+        int n = nums.length;
+        Arrays.sort(nums);
+        List<List<Integer>> ans = new ArrayList<>();
+        for (int i = 0; i < n - 3; i++) {
+            //去重
+            if (i > 0 && nums[i] == nums[i - 1]) continue;
+            //四数相加大于target,后面肯定都大于了
+            if (nums[i] + nums[i + 1] + nums[i + 2] + nums[i + 3] > target) break;
+            //当前数与最大的三个数的和还小，直接下个数
+            if (nums[i] + nums[n - 1] + nums[n - 2] + nums[n - 3] < target) continue;
+            //固定了第一个数开始找第二个数
+            for (int j = i + 1; j < n - 2; j++) {
+                //去重
+                if (j - i > 1 && nums[j] == nums[j - 1]) continue;
+                //四数相加大于target,后面肯定都大于了
+                if (nums[i] + nums[j] + nums[j + 1] + nums[j + 2] > target) break;
+                //当前数与最大的2个数的和还小，直接下个数
+                if (nums[i] + nums[j] + nums[n - 1] + nums[n - 2] < target) continue;
+                //寻找最后两个数
+                int left = j + 1;
+                int right = n - 1;
+                while (left < right) {
+                    int tmp = nums[i] + nums[j] + nums[left] + nums[right];
+                    if (tmp == target) {
+                        List<Integer> tmpList = new LinkedList<>(Arrays.asList(nums[i], nums[j], nums[left], nums[right]));
+                        ans.add(tmpList);
+                        while (left < right && nums[left] == nums[left + 1]) left += 1;
+                        while (left < right && nums[right] == nums[right - 1]) right -= 1;
+                        left += 1;
+                        right -= 1;
+                    } else if (tmp > target) right -= 1;
+                    else left += 1;
+                }
+            }
+        }
+        return ans;
+    }
+
+
+    public int maxPoints(int[][] points) {
+        if (points.length < 3) {
+            return points.length;
+        }
+        int result = 0;
+        for (int i = 0; i < points.length; i++) {
+            int duplicate = 0;
+            int max = 0;//保存经过当前点的直线中，最多的点
+            //斜率出现的次数
+            Map<String, Integer> map = new HashMap<>();
+            for (int j = i+1; j < points.length; j++) {
+                //求出分子分母
+                int x = points[j][0] - points[i][0];
+                int y = points[j][1] - points[i][1];
+                if (x == 0 && y == 0) {
+                    duplicate++;
+                    continue;
+
+                }
+                //进行约分
+                int gcd = gcd(x, y);
+                x = x / gcd;
+                y = y / gcd;
+                String key = x + "@" + y;
+                map.put(key, map.getOrDefault(key, 0) + 1);
+                max = Math.max(max, map.get(key));
+            }
+            result = Math.max(result, max + duplicate + 1);
+        }
+        return result;
+    }
+
+    private int gcd(int a, int b) {
+        while (b != 0) {
+            int temp = a % b;
+            a = b;
+            b = temp;
+        }
+        return a;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new StringTool().nextGreatestLetter(new char[]{'c', 'f', 'j'}, 'j'));
+        System.out.println(new StringTool().frequencySort("tree"));
     }
 }
