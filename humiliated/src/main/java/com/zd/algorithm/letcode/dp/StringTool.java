@@ -893,7 +893,7 @@ public class StringTool {
             int max = 0;//保存经过当前点的直线中，最多的点
             //斜率出现的次数
             Map<String, Integer> map = new HashMap<>();
-            for (int j = i+1; j < points.length; j++) {
+            for (int j = i + 1; j < points.length; j++) {
                 //求出分子分母
                 int x = points[j][0] - points[i][0];
                 int y = points[j][1] - points[i][1];
@@ -924,7 +924,46 @@ public class StringTool {
         return a;
     }
 
+    public boolean checkInclusion(String s1, String s2) {
+        char[] chars1 = s1.toCharArray();
+        Arrays.sort(chars1);
+        s1 = new String(chars1);
+        for (int i = s1.length(); i <= s2.length(); i++) {
+            char[] chars = Arrays.copyOfRange(s2.toCharArray(), i - s1.length(), i);
+            Arrays.sort(chars);
+            if (s1.equals(new String(chars))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public String simplifyPath(String path) {
+        Stack<String> stack = new Stack<>();
+        //根据/分割字符串
+        String[] str = path.split("/");
+        for (String s : str) {
+            if ("..".equals(s)) {
+                //若是。。返回上一层，所以当前层的地址去掉
+                if (!stack.empty()) {
+                    stack.pop();
+                }
+            } else if (!s.equals("") && !s.equals(".")) {
+                stack.push(s);
+            }
+        }
+        if (stack.isEmpty()) {
+            return "/";
+        }
+        // 这里用到 StringBuilder 操作字符串，效率高
+        StringBuilder ans = new StringBuilder();
+        for (String s : stack) {
+            ans.append("/").append(s);
+        }
+        return ans.toString();
+    }
+
     public static void main(String[] args) {
-        System.out.println(new StringTool().frequencySort("tree"));
+        System.out.println(new StringTool().checkInclusion("adc", "dcda"));
     }
 }
