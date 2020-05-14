@@ -977,9 +977,9 @@ public class Dp {
         map.put('4', new Character[]{'g', 'h', 'i'});
         map.put('5', new Character[]{'j', 'k', 'l'});
         map.put('6', new Character[]{'m', 'n', 'o'});
-        map.put('7', new Character[]{'p', 'q', 'r','s'});
+        map.put('7', new Character[]{'p', 'q', 'r', 's'});
         map.put('8', new Character[]{'t', 'u', 'v'});
-        map.put('9', new Character[]{'w', 'x', 'y','z'});
+        map.put('9', new Character[]{'w', 'x', 'y', 'z'});
 
         List<String> list = new ArrayList<>();
         if ("".equals(digits)) {
@@ -998,6 +998,20 @@ public class Dp {
             list = temps;
         }
         return list;
+    }
+
+    public int subarraySum(int[] nums, int k) {
+        int count = 0, pre = 0;
+        Map<Integer, Integer> map = new HashMap<>();
+        map.put(0, 1);
+        for (int num : nums) {
+            pre += num;
+            if (map.containsKey(pre - k)) {
+                count += map.get(pre - k);
+            }
+            map.put(pre, map.getOrDefault(pre, 0) + 1);
+        }
+        return count;
     }
 
     public static void main(String[] args) {

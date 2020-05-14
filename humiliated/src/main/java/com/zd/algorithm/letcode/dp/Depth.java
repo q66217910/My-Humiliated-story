@@ -1,5 +1,6 @@
 package com.zd.algorithm.letcode.dp;
 
+import com.google.common.collect.Lists;
 import org.checkerframework.checker.units.qual.A;
 
 import java.util.*;
@@ -167,6 +168,49 @@ public class Depth {
         return ((num & 0xaaaaaaaa) >> 1) | ((num & 0x55555555) << 1);
     }
 
+    public int minimumTotal(List<List<Integer>> triangle) {
+        int size = triangle.size();
+        int[][] dp = new int[size][size];
+        List<Integer> list = triangle.get(size - 1);
+        for (int j = 0; j < size; j++) {
+            dp[size - 1][j] = list.get(j);
+        }
+        for (int i = triangle.size() - 2; i >= 0; i--) {
+            List<Integer> temp = triangle.get(i);
+            for (int j = i; j >= 0; j--) {
+                dp[i][j] = Math.min(temp.get(j) + dp[i + 1][j + 1], temp.get(j) + dp[i + 1][j]);
+            }
+        }
+        return dp[0][0];
+    }
+
+    public int maxEnvelopes(int[][] envelopes) {
+        if (envelopes.length == 0) {
+            return 0;
+        }
+        Arrays.sort(envelopes, Comparator.<int[]>comparingInt(a -> a[0])
+                .thenComparing((a, b) -> b[1] - a[1]));
+        int[] dp = new int[envelopes.length];
+        for (int i = 0; i < envelopes.length; i++) {
+            dp[i] = envelopes[i][1];
+        }
+        return lis(dp);
+    }
+
+    private int lis(int[] nums) {
+        int len = 0;
+        for (int num : nums) {
+            int i = Arrays.binarySearch(nums, 0, len, num);
+            if (i < 0) {
+                i = -(i + 1);
+            }
+            nums[i] = num;
+            if (i == len) {
+                len++;
+            }
+        }
+        return len;
+    }
 
     public int openLock(String[] deadends, String target) {
         List<String> codes = Arrays.stream(deadends).collect(Collectors.toList());
@@ -473,7 +517,67 @@ public class Depth {
         }
     }
 
+
+    boolean[][] flag;
+    char[] words;
+    char[][] boards;
+    int row, col;
+    boolean result = false;
+
+
+    public boolean exist(char[][] board, String word) {
+        this.row = board.length;
+        this.col = board[0].length;
+        this.words = word.toCharArray();
+        this.boards = board;
+        for (int i = 0; i < row; i++) {
+            for (int j = 0; j < col; j++) {
+                if (board[i][j] == words[0]) {
+                    this.flag = new boolean[row][col];
+                    this.flag[i][j] = true;
+                    helper(i, j, 1);
+                    if (result) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private void helper(int i, int j, int count) {
+        if (count == words.length) {
+            result = true;
+            return;
+        }
+        if (i - 1 >= 0 && !flag[i - 1][j] && words[count] == boards[i - 1][j] && !result) {
+            flag[i - 1][j] = true;
+            helper(i - 1, j, ++count);
+            count--;
+            flag[i - 1][j] = false;
+        }
+        if (j + 1 < col && !flag[i][j + 1] && words[count] == boards[i][j + 1] && !result) {
+            flag[i][j + 1] = true;
+            helper(i, j + 1, ++count);
+            count--;
+            flag[i][j + 1] = false;
+        }
+        if (i + 1 < row && !flag[i + 1][j] && words[count] == boards[i + 1][j] && !result) {
+            flag[i + 1][j] = true;
+            helper(i + 1, j, ++count);
+            count--;
+            flag[i + 1][j] = false;
+        }
+        if (j - 1 >= 0 && !flag[i][j - 1] && words[count] == boards[i][j - 1] && !result) {
+            flag[i][j - 1] = true;
+            helper(i, j - 1, ++count);
+            count--;
+            flag[i][j - 1] = false;
+        }
+    }
+
+
     public static void main(String[] args) {
-        System.out.println(new Depth().maximalSquare(new char[][]{{'1', '0', '1', '0', '0'}, {'1', '0', '1', '1', '1'}, {'1', '1', '1', '1', '1'}, {'1', '0', '0', '1', '0'}}));
+        System.out.println(new Depth().maxEnvelopes(new int[][]{{5, 4}, {4, 6}, {6, 7}, {2, 3}, {1, 1}}));
     }
 }
