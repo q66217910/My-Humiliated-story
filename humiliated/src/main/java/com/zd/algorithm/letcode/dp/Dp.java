@@ -1,6 +1,8 @@
 package com.zd.algorithm.letcode.dp;
 
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 
 public class Dp {
@@ -863,7 +865,9 @@ public class Dp {
     }
 
     public List<Integer> grayCode(int n) {
-        List<Integer> res = new ArrayList<Integer>() {{ add(0); }};
+        List<Integer> res = new ArrayList<Integer>() {{
+            add(0);
+        }};
         int head = 1;
         for (int i = 0; i < n; i++) {
             for (int j = res.size() - 1; j >= 0; j--)
@@ -873,7 +877,130 @@ public class Dp {
         return res;
     }
 
+    public int findLengthOfLCIS(int[] nums) {
+        if (nums.length == 0) {
+            return 0;
+        }
+        int temp = 1, result = 1;
+        for (int i = 1; i < nums.length; i++) {
+            if (nums[i] > nums[i - 1]) {
+                temp++;
+            } else {
+                temp = 1;
+            }
+            result = Math.max(result, temp);
+        }
+        return result;
+    }
+
+    public int longestConsecutive(int[] nums) {
+        if (nums.length == 0) {
+            return 0;
+        }
+        Arrays.sort(nums);
+        int temp = 1, result = 1;
+        for (int i = 1; i < nums.length; i++) {
+            if (nums[i] - nums[i - 1] == 1) {
+                temp++;
+            } else if (nums[i] != nums[i - 1]) {
+                temp = 1;
+            }
+            result = Math.max(result, temp);
+        }
+        return result;
+    }
+
+    public String getPermutation(int n, int k) {
+        char[] c = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+        char[] result = new char[n];
+        //阶乘
+        int[] factorials = new int[n];
+        factorials[0] = 1;
+        for (int i = 1; i < n; i++) {
+            factorials[i] = factorials[i - 1] * i;
+        }
+        k--;
+        for (int i = n - 1; i >= 0; i--) {
+            //处于第几个区间就是几
+            int a = k / factorials[i];
+            k -= a * factorials[i];
+            result[n - 1 - i] = c[a];
+            System.arraycopy(c, a + 1, c, a, c.length - a - 1);
+        }
+        return new String(result);
+    }
+
+    public int findCircleNum(int[][] M) {
+        int m = M.length;
+        int n = M[0].length;
+        //每个人是否有朋友圈
+        int[] f = new int[m];
+        //所有的朋友关系
+        Queue<Integer> queue = new ArrayDeque<>();
+        int count = 0;
+        for (int i = 0; i < m; i++) {
+            if (f[i] == 0) {
+                queue.add(i);
+                while (!queue.isEmpty()) {
+                    Integer value = queue.poll();
+                    f[value] = 1;
+                    for (int j = 0; j < n; j++) {
+                        if (M[value][j] == 1 && f[j] == 0) {
+                            queue.add(j);
+                        }
+                    }
+                }
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public boolean increasingTriplet(int[] nums) {
+        int n = nums.length;
+        //上一个数
+        for (int j = 1; j < n - 1; j++) {
+            int i = Arrays.stream(nums).limit(j).min().getAsInt();
+            int k = Arrays.stream(nums).skip(j).max().getAsInt();
+            if (nums[j] > i && nums[j] < k) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public List<String> letterCombinations(String digits) {
+
+        Map<Character, Character[]> map = new HashMap<>();
+        map.put('2', new Character[]{'a', 'b', 'c'});
+        map.put('3', new Character[]{'d', 'e', 'f'});
+        map.put('4', new Character[]{'g', 'h', 'i'});
+        map.put('5', new Character[]{'j', 'k', 'l'});
+        map.put('6', new Character[]{'m', 'n', 'o'});
+        map.put('7', new Character[]{'p', 'q', 'r','s'});
+        map.put('8', new Character[]{'t', 'u', 'v'});
+        map.put('9', new Character[]{'w', 'x', 'y','z'});
+
+        List<String> list = new ArrayList<>();
+        if ("".equals(digits)) {
+            return list;
+        }
+        list.add("");
+        for (int i = 0; i < digits.length(); i++) {
+            List<String> temps = new ArrayList<>();
+            char c = digits.charAt(i);
+            Character[] cs = map.get(c);
+            for (Character character : cs) {
+                for (String s : list) {
+                    temps.add(s + character);
+                }
+            }
+            list = temps;
+        }
+        return list;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().mincostTickets(new int[]{1, 4, 6, 7, 8, 20}, new int[]{2, 7, 15}));
+        System.out.println(new Dp().letterCombinations("7"));
     }
 }

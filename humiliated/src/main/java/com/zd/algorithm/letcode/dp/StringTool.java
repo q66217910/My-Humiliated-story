@@ -963,7 +963,206 @@ public class StringTool {
         return ans.toString();
     }
 
+    private long getID(long x, long w) {
+        return x < 0 ? (x + 1) / w - 1 : x / w;
+    }
+
+    public boolean containsNearbyAlmostDuplicate(int[] nums, int k, int t) {
+        if (t < 0) return false;
+        Map<Long, Long> d = new HashMap<>();
+        long w = (long) t + 1;
+        for (int i = 0; i < nums.length; ++i) {
+            long m = getID(nums[i], w);
+            if (d.containsKey(m))
+                return true;
+            if (d.containsKey(m - 1) && Math.abs(nums[i] - d.get(m - 1)) < w)
+                return true;
+            if (d.containsKey(m + 1) && Math.abs(nums[i] - d.get(m + 1)) < w)
+                return true;
+            d.put(m, (long) nums[i]);
+            if (i >= k) d.remove(getID(nums[i - k], w));
+        }
+        return false;
+    }
+
+    public int threeSumClosest(int[] nums, int target) {
+        int min = Integer.MAX_VALUE;
+        int result = 0;
+        //先排序
+        Arrays.sort(nums);
+        for (int i = 0; i < nums.length; i++) {
+            int j = i + 1, k = nums.length - 1;
+            while (j < k) {
+                int value = nums[i] + nums[j] + nums[k];
+                if (Math.abs(value - target) < min) {
+                    min = Math.abs(value - target);
+                    result = value;
+                }
+                if (value == target) {
+                    return value;
+                } else if (value > target) {
+                    k--;
+                } else {
+                    j++;
+                }
+            }
+        }
+        return result;
+    }
+
+    public double findMedianSortedArrays(int[] nums1, int[] nums2) {
+        List<Integer> list = new ArrayList<>();
+        for (int i = 0; i < nums1.length; i++) {
+            list.add(nums1[i]);
+        }
+        for (int i = 0; i < nums2.length; i++) {
+            list.add(nums2[i]);
+        }
+        list = list.stream().sorted().collect(Collectors.toList());
+        if (list.size() % 2 == 0) {
+            return new Double(list.get(list.size() / 2 - 1) + list.get(list.size() / 2)) / 2;
+        } else {
+            return list.get(list.size() / 2);
+        }
+    }
+
+    public String multiply(String num1, String num2) {
+        if (num1.equals("0") || num2.equals("0")) {
+            return "0";
+        }
+        // 保存计算结果
+        String res = "0";
+        // num2 逐位与 num1 相乘
+        for (int i = num2.length() - 1; i >= 0; i--) {
+            int carry = 0;
+            // 保存 num2 第i位数字与 num1 相乘的结果
+            StringBuilder temp = new StringBuilder();
+            // 补 0
+            for (int j = 0; j < num2.length() - 1 - i; j++) {
+                temp.append(0);
+            }
+            int n2 = num2.charAt(i) - '0';
+
+            // num2 的第 i 位数字 n2 与 num1 相乘
+            for (int j = num1.length() - 1; j >= 0 || carry != 0; j--) {
+                int n1 = j < 0 ? 0 : num1.charAt(j) - '0';
+                int product = (n1 * n2 + carry) % 10;
+                temp.append(product);
+                carry = (n1 * n2 + carry) / 10;
+            }
+            // 将当前结果与新计算的结果求和作为新的结果
+            res = addStrings(res, temp.reverse().toString());
+        }
+        return res;
+    }
+
+    /**
+     * 对两个字符串数字进行相加，返回字符串形式的和
+     */
+    public String addStrings(String num1, String num2) {
+        StringBuilder builder = new StringBuilder();
+        int carry = 0;
+        for (int i = num1.length() - 1, j = num2.length() - 1;
+             i >= 0 || j >= 0 || carry != 0;
+             i--, j--) {
+            int x = i < 0 ? 0 : num1.charAt(i) - '0';
+            int y = j < 0 ? 0 : num2.charAt(j) - '0';
+            int sum = (x + y + carry) % 10;
+            builder.append(sum);
+            carry = (x + y + carry) / 10;
+        }
+        return builder.reverse().toString();
+    }
+
+    public int[] productExceptSelf(int[] nums) {
+        int length = nums.length;
+        int[] answer = new int[length];
+        answer[0] = 1;
+        for (int i = 1; i < length; i++) {
+            answer[i] = nums[i - 1] * answer[i - 1];
+        }
+        int R = 1;
+        for (int i = length - 1; i >= 0; i--) {
+            answer[i] = answer[i] * R;
+            R *= nums[i];
+        }
+        return answer;
+    }
+
+    public int[][] generateMatrix(int n) {
+        List<Integer> ret = IntStream.range(1, (n * n) + 1).boxed().collect(Collectors.toList());
+        int[][] matrix = new int[n][n];
+        int b = 0, t = n - 1, l = 0, r = n - 1, k = 0;
+        while (k <= ret.size()) {
+            for (int j = l; j <= r; j++) matrix[b][j] = ret.get(k++);
+            if (++b > t) break;
+            for (int i = b; i <= t; i++) matrix[i][r] = ret.get(k++);
+            if (--r < l) break;
+            for (int j = r; j >= l; j--) matrix[t][j] = ret.get(k++);
+            if (--t < b) break;
+            for (int i = t; i >= b; i--) matrix[i][l] = ret.get(k++);
+            if (++l > r) break;
+        }
+        return matrix;
+    }
+
+    public List<String> restoreIpAddresses(String s) {
+        List<String> result = new ArrayList<>();
+        StringBuilder ip = new StringBuilder();
+
+        for (int a = 1; a < 4; a++) {
+            for (int b = 1; b < 4; b++) {
+                for (int c = 1; c < 4; c++) {
+                    for (int d = 1; d < 4; d++) {
+                        if (a + b + c + d == s.length()) {
+                            int seg1 = Integer.parseInt(s.substring(0, a));
+                            int seg2 = Integer.parseInt(s.substring(a, a + b));
+                            int seg3 = Integer.parseInt(s.substring(a + b, a + b + c));
+                            int seg4 = Integer.parseInt(s.substring(a + b + c, a + b + c + d));
+                            // 四个段数值满足0~255
+                            if (seg1 <= 255 && seg2 <= 255 && seg3 <= 255 && seg4 <= 255) {
+                                ip.append(seg1).append(".").append(seg2).append(".").
+                                        append(seg3).append(".").append(seg4);
+                                // 保障截取的字符串转成int后与输入字符串长度相同
+                                if (ip.length() == s.length() + 3) {
+                                    result.add(ip.toString());
+                                }
+                                ip.delete(0, ip.length());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    public boolean validUtf8(int[] data) {
+        int num = data[0];
+        int temp = 1 << 7;
+        int count = 0;
+        while (temp > 0) {
+            if ((temp & num) == temp) {
+                count++;
+                temp = temp >> 1;
+            } else {
+                break;
+            }
+        }
+        if (count == 1 || count > 4) {
+            return false;
+        }
+        temp = 1 << 6;
+        for (int i = 1; i < count; i++) {
+            int v = data[i];
+            if (Integer.highestOneBit(v) != 128 || (temp & v) == temp) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new StringTool().checkInclusion("adc", "dcda"));
+        System.out.println(new StringTool().validUtf8(new int[]{230, 136, 145}));
     }
 }

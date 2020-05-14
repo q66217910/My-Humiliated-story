@@ -450,6 +450,28 @@ public class Depth {
         return maxArea;
     }
 
+    public void setZeroes(int[][] matrix) {
+        int m = matrix.length;
+        int n = matrix[0].length;
+        Set<Integer> rows = new HashSet<>();
+        Set<Integer> columns = new HashSet<>();
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < n; j++) {
+                if (matrix[i][j] == 0) {
+                    rows.add(i);
+                    columns.add(j);
+                }
+            }
+        }
+        for (Integer row : rows) {
+            Arrays.fill(matrix[row], 0);
+        }
+        for (Integer column : columns) {
+            for (int i = 0; i < m; i++) {
+                matrix[i][column] = 0;
+            }
+        }
+    }
 
     public static void main(String[] args) {
         System.out.println(new Depth().maximalSquare(new char[][]{{'1', '0', '1', '0', '0'}, {'1', '0', '1', '1', '1'}, {'1', '1', '1', '1', '1'}, {'1', '0', '0', '1', '0'}}));
