@@ -1076,6 +1076,93 @@ public class Dp {
         return ans;
     }
 
+    public int robotSim(int[] commands, int[][] obstacles) {
+        //初始点,
+        int[] dx = new int[]{0, 1, 0, -1};
+        int[] dy = new int[]{1, 0, -1, 0};
+        int x = 0, y = 0, di = 0;
+
+        //障碍点
+        Set<Long> obstacleSet = new HashSet();
+        for (int[] obstacle : obstacles) {
+            long ox = (long) obstacle[0] + 30000;
+            long oy = (long) obstacle[1] + 30000;
+            obstacleSet.add((ox << 16) + oy);
+        }
+
+        int ans = 0;
+        for (int cmd : commands) {
+            if (cmd == -2)  //left
+                di = (di + 3) % 4;
+            else if (cmd == -1)  //right
+                di = (di + 1) % 4;
+            else {
+                for (int k = 0; k < cmd; ++k) {
+                    int nx = x + dx[di];
+                    int ny = y + dy[di];
+                    long code = (((long) nx + 30000) << 16) + ((long) ny + 30000);
+                    if (!obstacleSet.contains(code)) {
+                        x = nx;
+                        y = ny;
+                        ans = Math.max(ans, x * x + y * y);
+                    }
+                }
+            }
+        }
+        return ans;
+    }
+
+    public int minEatingSpeed(int[] piles, int H) {
+        int left = 1;
+        int right = (int) Math.pow(10, 9);
+        while (left < right) {
+            int mid = (left + right) / 2;
+            if (possible(piles, H, mid)) {
+                right = mid;
+            } else {
+                left = mid + 1;
+            }
+        }
+        return left;
+    }
+
+    /**
+     * 判断是否能吃完
+     */
+    public boolean possible(int[] piles, int H, int k) {
+        int time = 0;
+        for (int pile : piles) {
+            time += (pile - 1) / k + 1;
+        }
+        return time <= H;
+    }
+
+    public int lenLongestFibSubseq(int[] A) {
+        int n = A.length;
+        //存储每个数的值与索引
+        Map<Integer, Integer> index = new HashMap();
+        for (int i = 0; i < n; i++) {
+            index.put(A[i], i);
+        }
+        Map<Integer, Integer> longest = new HashMap();
+        int ans = 0;
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < i; j++) {
+                //A[i] - A[j]的差，查看他们的索引是否存在
+                int k = index.getOrDefault(A[i] - A[j], -1);
+                if (k >= 0 && k < j) {
+                    //说明存在值,并且索引在j之前
+                    int cand = longest.getOrDefault(k * n + j, 2) + 1;
+                    //设置值,值为前一个数量+1，前一个没有为2
+                    longest.put(j * n + i, cand);
+                    ans = Math.max(ans, cand);
+                }
+            }
+        }
+        return ans;
+    }
+
+
     public static void main(String[] args) {
         System.out.println(new Dp().maxProduct(new int[]{-3, 0, 1, -2}));
     }
