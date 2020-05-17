@@ -406,41 +406,15 @@ public class Week180 {
     }
 
     public int minJump(int[] jump) {
-        int n = jump.length;
-        int[] dp = new int[n];
-        int cur = 0;
-        dp[0] = jump[0] >= jump.length ? 1 : 0;
-        for (int i = 1; i < n; i++) {
-            if (jump[i] + i >= jump.length) {
-                dp[i] = 1;
-                if (cur == 0) {
-                    cur = i;
-                }
-            } else if (dp[i - 1] > 0) {
-                dp[i] = 2;
+        int[] dp = new int[jump.length];
+        dp[jump.length-1] = 1;
+        for(int i=jump.length-2;i>=0;i--){
+            dp[i] = jump[i]+i >= jump.length?1:dp[jump[i]+i]+1;
+            //遍历当前位置更新后影响到的后面的位置，只需要更新到dp[j] >= dp[i]+1即可
+            //如果遍历到某dp[j]<dp[i]+1就不需要向右遍历了,因为j到dp.length的值会被当前遍历到的dp[j]更新而不是dp[i]+1
+            for(int j = i+1; j < dp.length && dp[j] >= dp[i]+1 ; j++){
+                dp[j] = dp[i]+1;
             }
-        }
-        while (dp[0] == 0) {
-            int value = 0;
-            int temp = 0;
-            for (int i = 0; i < cur; i++) {
-                if (dp[i + jump[i]] > 0) {
-                    dp[i] = dp[i + jump[i]] + 1;
-                    value = dp[i];
-                    if (temp == 0) {
-                        temp = i;
-                    }
-                }
-            }
-            for (int i = 0; i < cur; i++) {
-                if (dp[i] > 0) {
-                    value = dp[i];
-                }
-                if (i > 0 && dp[i - 1] > 0 && dp[i] == 0) {
-                    dp[i] = value + 1;
-                }
-            }
-            cur = temp;
         }
         return dp[0];
     }

@@ -4,7 +4,7 @@ import java.util.Arrays;
 
 /**
  * 二分查找法
- *
+ * <p>
  * 1.首先判断出返回的是left还是right。(前面left，后面right)
  * 2.判断比较符号  key（>/>=left    </<= right）   mid
  */
@@ -117,5 +117,26 @@ public class Dichotomy {
         }
         return right;
     }
-    
+
+
+    /**
+     * 找出第 k 小的距离对
+     */
+    public int smallestDistancePair(int[] nums, int k) {
+        Arrays.sort(nums);
+        int l = 0, r = nums[nums.length - 1] - nums[0];
+        while (l < r) {
+            //中间差值
+            int m = (l + r) >> 1;
+            int count = 0, left = 0;
+            //计算右节点右节点比左节点大的m数量
+            for (int right = 0; right < nums.length; right++) {
+                while (nums[right] - nums[left] > m) left++;
+                count += right - left;
+            }
+            if (count >= k) r = m;
+            else l = m + 1;
+        }
+        return l;
+    }
 }

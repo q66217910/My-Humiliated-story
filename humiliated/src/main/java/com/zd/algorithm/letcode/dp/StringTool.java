@@ -1162,6 +1162,20 @@ public class StringTool {
         return true;
     }
 
+    /**
+     * 删除最外层的括号
+     */
+    public String removeOuterParentheses(String s) {
+        StringBuilder sb = new StringBuilder();
+        int level = 0;
+        for (char c : s.toCharArray()) {
+            if (c == ')') --level;
+            if (level >= 1) sb.append(c);
+            if (c == '(') ++level;
+        }
+        return sb.toString();
+    }
+
     public static void main(String[] args) {
         System.out.println(new StringTool().validUtf8(new int[]{230, 136, 145}));
     }

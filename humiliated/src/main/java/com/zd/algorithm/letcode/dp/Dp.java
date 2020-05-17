@@ -1,5 +1,6 @@
 package com.zd.algorithm.letcode.dp;
 
+import java.lang.reflect.Array;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -1014,7 +1015,68 @@ public class Dp {
         return count;
     }
 
+    /**
+     * 6 9 互换
+     */
+    public int maximum69Number(int num) {
+        String s = String.valueOf(num);
+        char[] chars = s.toCharArray();
+        int i = s.indexOf('6');
+        if (i >= 0) {
+            chars[i] = '9';
+        }
+        return Integer.parseInt(new String(chars));
+    }
+
+    /**
+     * 唯一摩尔斯密码词
+     */
+    public int uniqueMorseRepresentations(String[] words) {
+        String[] s = new String[]{".-", "-...", "-.-.", "-..", ".", "..-.",
+                "--.", "....", "..", ".---", "-.-", ".-..", "--", "-.",
+                "---", ".--.", "--.-", ".-.", "...", "-",
+                "..-", "...-", ".--", "-..-", "-.--", "--.."};
+        Set<String> set = new HashSet<>();
+        for (String word : words) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < word.length(); i++) {
+                sb.append(s[word.charAt(i) - 'a']);
+            }
+            set.add(sb.toString());
+        }
+        return set.size();
+    }
+
+    /**
+     * 反转图像
+     */
+    public int[][] flipAndInvertImage(int[][] a) {
+        int m = a.length;
+        int n = a[0].length;
+        int[][] res = new int[m][n];
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < n; j++) {
+                res[i][n - j - 1] = a[i][j] == 0 ? 1 : 0;
+            }
+        }
+        return res;
+    }
+
+    /**
+     * 乘积最大子数组
+     */
+    public int maxProduct(int[] nums) {
+        int maxF = nums[0], minF = nums[0], ans = nums[0];
+        for (int i = 1; i < nums.length; ++i) {
+            int mx = maxF, mn = minF;
+            maxF = Math.max(mx * nums[i], Math.max(nums[i], mn * nums[i]));
+            minF = Math.min(mn * nums[i], Math.min(nums[i], mx * nums[i]));
+            ans = Math.max(maxF, ans);
+        }
+        return ans;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().letterCombinations("7"));
+        System.out.println(new Dp().maxProduct(new int[]{-3, 0, 1, -2}));
     }
 }
