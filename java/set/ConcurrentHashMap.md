@@ -3,7 +3,7 @@ ConcurrentHashMap
 1.7:
 ---
     Segment:存放数据时首先需要定位到具体的 Segment 中 
-    
+
 
 1.8:
 ---
@@ -37,6 +37,9 @@ class  ConcurrentHashMap{
     
     //int最大值为(1111...1111)
     static final int HASH_BITS = 0x7fffffff;
+    
+    //链表转红黑树的数量
+    static final int TREEIFY_THRESHOLD = 8;
     
     //用高16位与低16位异或
     static final int spread(int h) {
@@ -85,6 +88,7 @@ class  ConcurrentHashMap{
         return null;
     }
     
+    //put方法
     final V putVal(K key, V value, boolean onlyIfAbsent) {
         if (key == null || value == null) throw new NullPointerException();
         //高位与低位异或
@@ -114,6 +118,7 @@ class  ConcurrentHashMap{
                     if (tabAt(tab, i) == f) {
                         //hash值>0,说明是状态正常
                         if (fh >= 0) {
+                            //链表节点数量
                             binCount = 1;
                             for (Node<K,V> e = f;; ++binCount) {
                                 K ek;
@@ -122,6 +127,7 @@ class  ConcurrentHashMap{
                                     ((ek = e.key) == key ||
                                      (ek != null && key.equals(ek)))) {
                                     oldVal = e.val;
+                                    //若存在则不修改值
                                     if (!onlyIfAbsent)
                                         e.val = value;
                                     break;
@@ -148,7 +154,9 @@ class  ConcurrentHashMap{
                         }
                     }
                 }
+                //若链表节点数量不为0
                 if (binCount != 0) {
+                    //若链表节点数量大于8将链表转换为红黑树
                     if (binCount >= TREEIFY_THRESHOLD)
                         treeifyBin(tab, i);
                     if (oldVal != null)
@@ -185,6 +193,9 @@ class  ConcurrentHashMap{
 
 ```java
 class ConcurrentHashMap{
+    
+    //最小出现红黑树的table大小
+    static final int MIN_TREEIFY_CAPACITY = 64;
     
     //节点,用作链表，红黑树节点继承它
     static class Node<K,V> implements Map.Entry<K,V> {
@@ -293,12 +304,44 @@ class ConcurrentHashMap{
         }
     }
     
+    //链表转红黑树
+    private final void treeifyBin(Node<K,V>[] tab, int index) {
+        Node<K,V> b; int n, sc;
+        if (tab != null) {
+            //若table大小小于64
+            if ((n = tab.length) < MIN_TREEIFY_CAPACITY)
+                //table扩容,说明table小并且冲突严重
+                tryPresize(n << 1);
+            else if ((b = tabAt(tab, index)) != null && b.hash >= 0) {
+                //对当前node上锁
+                synchronized (b) {
+                    if (tabAt(tab, index) == b) {
+                        //将链表转化为双向链表
+                        //hd:root节点,tl上一个节点
+                        TreeNode<K,V> hd = null, tl = null;
+                        for (Node<K,V> e = b; e != null; e = e.next) {
+                            TreeNode<K,V> p =
+                                new TreeNode<K,V>(e.hash, e.key, e.val,
+                                                  null, null);
+                            if ((p.prev = tl) == null)
+                                hd = p;
+                            else
+                                tl.next = p;
+                            tl = p;
+                        }
+                        //
+                        setTabAt(tab, index, new TreeBin<K,V>(hd));
+                    }
+                }
+            }
+        }
+    }
 }
 ```
 
 负载因子与表的容量:
 ----------
-                     
+
      在ConcurrentHashMap中，负载因子默认为0.75.[sizeCtl = n - (n >>> 2)]. 
         注: 负载因子为什么是0.75? 
                一.降低hash的冲突 (查询时间)
@@ -328,7 +371,7 @@ class ConcurrentHashMap{
         return (n < 0) ? 1 : (n >= MAXIMUM_CAPACITY) ? MAXIMUM_CAPACITY : n + 1;    
     }
 }
-```   
+```
 
 表的初始化
 -----
@@ -368,10 +411,10 @@ class ConcurrentHashMap{
        return tab;
    }
 }
-```    
+```
 
 表的扩容
-====
+---
 1.当s(总数)> =sizeCtl时进行扩容
 
 2.如果sizeCtl不小于0，则说明初次扩容
