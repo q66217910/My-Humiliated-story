@@ -553,10 +553,13 @@ class ConcurrentHashMap{
             ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
             boolean advance = true;
             boolean finishing = false;
-           //i:代表table的第几个节点，bound:
+           //i:代表table的第几个节点 
+           //bound: 处理的边界,处理到这为止 
+           //stride:当次处理的个数
            for (int i = 0, bound = 0;;) {
             Node<K,V> f; int fh;
-            //可以看作领取任务，获取i,为分配的任务，bound为要处理的任务数，处理完了会重新领取bound个
+            //可以看作领取任务，获取i为分配的任务起始点，bound为任务的终点
+            //stride为要处理的任务数，处理完了会重新领取stride个   
             while (advance) {
                 int nextIndex, nextBound;
                 //当前所在节点-1 还大于
