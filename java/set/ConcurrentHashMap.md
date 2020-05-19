@@ -1,5 +1,14 @@
+
+
+
+
+
+
+
+
 ConcurrentHashMap
 ===
+
 1.7:
 ---
     Segment:存放数据时首先需要定位到具体的 Segment 中 
@@ -426,6 +435,13 @@ binCount:
 
     binCount<0: 不需要扩容
     0<binCount<=1: 只需要检查是否有锁的竞争
+    binCount:(链表时表示为链表节点个数，红黑树恒为2) 
+CounterCell:
+
+```
+	节点数量计数,相当于LongAdder,可以看做是一个AtomicLong,是将值拆分存储,减少写时资源竞争。
+```
+
 ```java
 class ConcurrentHashMap{
                         
@@ -438,6 +454,23 @@ class ConcurrentHashMap{
 
     //check为binCount
     private final void addCount(long x, int check) {
+        //CounterCell 计数器，相当于LongAdder
+        CounterCell[] as; long b, s;
+        if ((as = counterCells) != null ||
+            !U.compareAndSwapLong(this, BASECOUNT, b = baseCount, s = b + x)) {
+            CounterCell a; long v; int m;
+            boolean uncontended = true;
+            if (as == null || (m = as.length - 1) < 0 ||
+                (a = as[ThreadLocalRandom.getProbe() & m]) == null ||
+                !(uncontended =
+                  U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))) {
+                fullAddCount(x, uncontended);
+                return;
+            }
+            if (check <= 1)
+                return;
+            s = sumCount();
+        }
         if (check >= 0) {
             Node<K,V>[] tab, nt; int n, sc;  
             //当s(总数)> =sizeCtl时进行扩容
@@ -516,9 +549,142 @@ class ConcurrentHashMap{
             nextTable = nextTab;
             //扩容时下个表的索引
             transferIndex = n;
+            //传输标识节点,在传输过程加入头节点,使其他线程读取当前节点时，hash标识为MOVE
             ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
             boolean advance = true;
             boolean finishing = false;
+           //i:代表table的第几个节点，bound:
+           for (int i = 0, bound = 0;;) {
+            Node<K,V> f; int fh;
+            //可以看作领取任务，获取i,为分配的任务，bound为要处理的任务数，处理完了会重新领取bound个
+            while (advance) {
+                int nextIndex, nextBound;
+                //当前所在节点-1 还大于
+                if (--i >= bound || finishing)
+                    advance = false;
+                //无可以领取的任务
+                else if ((nextIndex = transferIndex) <= 0) {
+                    i = -1;
+                    advance = false;
+                }
+                //领取任务
+                else if (U.compareAndSwapInt
+                         (this, TRANSFERINDEX, nextIndex,
+                          nextBound = (nextIndex > stride ?
+                                       nextIndex - stride : 0))) {
+                    bound = nextBound;
+                    i = nextIndex - 1;
+                    advance = false;
+                }
+            }
+            //i的值不在table范围了
+            if (i < 0 || i >= n || i + n >= nextn) {
+                int sc;
+                //判断finishing标识
+                if (finishing) {
+                    //如果迁移结束了,将nextTable置空,当前table设置为新的table,并重新设置sizeCtl值
+                    nextTable = null;
+                    table = nextTab;
+                    sizeCtl = (n << 1) - (n >>> 1);
+                    return;
+                }
+                //如果标识没设置为结束,先更新下SIZECTL的值,线程数-1，
+                //直到线程为1,表示只有当前线程了，其他线程都已经处理结束了
+                //可以设置finishing表示
+                if (U.compareAndSwapInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
+                    if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
+                        return;
+                    finishing = advance = true;
+                    i = n;
+                }
+            }
+            //当前节点为空
+            else if ((f = tabAt(tab, i)) == null)
+                //将原table当前节点设置为迁移节点，设置成功并重新领取任务
+                advance = casTabAt(tab, i, null, fwd);
+            else if ((fh = f.hash) == MOVED)
+                //当前节点已经是迁移节点，重新去领取任务
+                advance = true; 
+            else {
+                synchronized (f) {
+                    if (tabAt(tab, i) == f) {
+                        Node<K,V> ln, hn;
+                        //hash值大于0，是链表
+                        if (fh >= 0) {
+                            int runBit = fh & n;
+                            Node<K,V> lastRun = f;
+                            //判断hash值，因为会出现所以hash在扩容后或者扩容前的链表
+                            for (Node<K,V> p = f.next; p != null; p = p.next) {
+                                int b = p.hash & n;
+                                if (b != runBit) {
+                                    runBit = b;
+                                    lastRun = p;
+                                }
+                            }
+                            if (runBit == 0) {
+                                ln = lastRun;
+                                hn = null;
+                            }
+                            else {
+                                hn = lastRun;
+                                ln = null;
+                            }
+                            for (Node<K,V> p = f; p != lastRun; p = p.next) {
+                                int ph = p.hash; K pk = p.key; V pv = p.val;
+                                //(ph & n) == 0 代表在扩容前的链表，否则在扩容后
+                                // 因为扩容后table.length为2n 
+                                if ((ph & n) == 0)
+                                    ln = new Node<K,V>(ph, pk, pv, ln);
+                                else
+                                    hn = new Node<K,V>(ph, pk, pv, hn);
+                            }
+                            //设置链表
+                            setTabAt(nextTab, i, ln);
+                            setTabAt(nextTab, i + n, hn);
+                            //将原节点设置为迁移中
+                            setTabAt(tab, i, fwd);
+                            advance = true;
+                        }
+                        else if (f instanceof TreeBin) {
+                            //红黑树迁移
+                            //同链表差不多，先按照hash值转化成两个双向链表，双向链表再生成红黑树
+                            TreeBin<K,V> t = (TreeBin<K,V>)f;
+                            TreeNode<K,V> lo = null, loTail = null;
+                            TreeNode<K,V> hi = null, hiTail = null;
+                            int lc = 0, hc = 0;
+                            for (Node<K,V> e = t.first; e != null; e = e.next) {
+                                int h = e.hash;
+                                TreeNode<K,V> p = new TreeNode<K,V>
+                                    (h, e.key, e.val, null, null);
+                                if ((h & n) == 0) {
+                                    if ((p.prev = loTail) == null)
+                                        lo = p;
+                                    else
+                                        loTail.next = p;
+                                    loTail = p;
+                                    ++lc;
+                                }
+                                else {
+                                    if ((p.prev = hiTail) == null)
+                                        hi = p;
+                                    else
+                                        hiTail.next = p;
+                                    hiTail = p;
+                                    ++hc;
+                                }
+                            }
+                            ln = (lc <= UNTREEIFY_THRESHOLD) ? untreeify(lo) :
+                                (hc != 0) ? new TreeBin<K,V>(lo) : t;
+                            hn = (hc <= UNTREEIFY_THRESHOLD) ? untreeify(hi) :
+                                (lc != 0) ? new TreeBin<K,V>(hi) : t;
+                            setTabAt(nextTab, i, ln);
+                            setTabAt(nextTab, i + n, hn);
+                            setTabAt(tab, i, fwd);
+                            advance = true;
+                        }
+                    }
+                }
+            }
         }
     }
 }
