@@ -329,7 +329,7 @@ class ConcurrentHashMap{
                                 tl.next = p;
                             tl = p;
                         }
-                        //
+                        //new TreeBin():将双向链表转化为红黑树
                         setTabAt(tab, index, new TreeBin<K,V>(hd));
                     }
                 }
@@ -415,9 +415,12 @@ class ConcurrentHashMap{
 
 表的扩容
 ---
-1.当s(总数)> =sizeCtl时进行扩容
+扩容的触发：
 
-2.如果sizeCtl不小于0，则说明初次扩容
+```
+1.sizeCtl(当前size>=sizeCtl,sizeCtl为 table*负载因子)
+2.当table.length<64,并且出现单个链表长度大于8,说明table太小并且hash冲突严重，这时候扩容而不是链表转化成红黑树。
+```
 
 binCount:
 
