@@ -1176,7 +1176,36 @@ public class StringTool {
         return sb.toString();
     }
 
+    public int removePalindromeSub(String s) {
+        if (s.length() == 0) {
+            return 0;
+        }
+        char[] chars = s.toCharArray();
+        boolean isPalindrome = true;
+        for (int i = 0; i < chars.length / 2; i++) {
+            if (chars[i] != chars[chars.length - 1 - i]) {
+                isPalindrome = false;
+                break;
+            }
+        }
+        return isPalindrome ? 1 : 2;
+    }
+
+    public int[] kWeakestRows(int[][] mat, int k) {
+        Map<Integer, Integer> index = new HashMap<>();
+        for (int i = 0; i < mat.length; i++) {
+            index.put(i, Arrays.stream(mat[i]).sum());
+        }
+        return index.entrySet()
+                .stream()
+                .sorted(Map.Entry.comparingByValue())
+                .mapToInt(Map.Entry::getKey)
+                .limit(k)
+                .toArray();
+    }
+
+
     public static void main(String[] args) {
-        System.out.println(new StringTool().validUtf8(new int[]{230, 136, 145}));
+        System.out.println(new StringTool().removePalindromeSub("ababb"));
     }
 }
