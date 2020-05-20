@@ -1,5 +1,8 @@
 package com.zd.algorithm.letcode.dp;
 
+import org.checkerframework.checker.units.qual.A;
+import sun.misc.Unsafe;
+
 import java.lang.reflect.Array;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -1163,7 +1166,215 @@ public class Dp {
     }
 
 
+    public boolean checkSubarraySum(int[] nums, int k) {
+        int sum = 0;
+        Map<Integer, Integer> map = new HashMap<>();
+        map.put(0, -1);
+        for (int i = 0; i < nums.length; i++) {
+            sum += nums[i];
+            if (k != 0) sum = sum % k;
+            if (map.containsKey(sum)) {
+                if (i - map.get(sum) > 1)
+                    return true;
+            } else {
+                map.put(sum, i);
+            }
+        }
+        return false;
+    }
+
+    public int countSquares(int[][] matrix) {
+        int m = matrix.length;
+        int n = matrix[0].length;
+        int[][] dp = new int[m][n];
+        int res = 0;
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < n; j++) {
+                //开始数量
+                if (i == 0 || j == 0) {
+                    dp[i][j] = matrix[i][j];
+                } else if (matrix[i][j] == 0) {
+                    dp[i][j] = 0;
+                } else {
+                    //前面的最小数+本身的1
+                    //也就是左/上/左上都满足时
+                    dp[i][j] = Math.min(Math.min(dp[i][j - 1], dp[i - 1][j]), dp[i - 1][j - 1]) + 1;
+                }
+                res += dp[i][j];
+            }
+        }
+        return res;
+    }
+
+    public int numDupDigitsAtMostN(int n) {
+        List<Integer> digits = new ArrayList<>();
+        int temp = n;
+        while (temp > 0) {
+            digits.add(temp % 10);
+            temp /= 10;
+        }
+        //位数
+        int k = digits.size();
+        //0-9,被使用次数,不重复
+        int[] used = new int[10];
+        int total = 0;
+
+        //给每一位安排不一样的数字,预处理
+        for (int i = 0; i < k; i++) {
+            //A(i,j)种放置方法
+            total += 9 * A(9, i - 1);
+        }
+
+        //从高位开始处理，(最后加入最高位的情况)
+        for (int i = k - 1; i >= 0; i--) {
+            //每位的数字
+            int num = digits.get(i);
+
+            //最高位从1开始，因为最高位不能为0
+            for (int j = i == k - 1 ? 1 : 0; j < num; j++) {
+                //当前数已被使用
+                if (used[j] != 0) {
+                    continue;
+                }
+                total += A(10 - (k - i), i);
+            }
+
+            if (++used[num] > 1) {
+                break;
+            }
+
+            if (i == 0) {
+                total += 1;
+            }
+        }
+        //总数-不重复=含重复
+        return n - total;
+    }
+
+
+    public int A(int i, int j) {
+        return fact(i) / fact(i - j);
+    }
+
+    /**
+     * 求阶乘
+     */
+    public int fact(int n) {
+        if (n == 1 || n == 0) {
+            return 1;
+        }
+        return n * fact(n - 1);
+    }
+
+    public int palindromePartition(String s, int k) {
+        //i:前i个字符, j:分割了几次
+        int[][] dp = new int[s.length() + 1][k + 1];
+        for (int[] ints : dp) {
+            Arrays.fill(ints, Integer.MAX_VALUE);
+        }
+        dp[0][0] = 0;
+        for (int i = 1; i <= s.length(); i++) {
+            for (int j = 1; j <= Math.min(i, k); j++) {
+                if (j == 1) {
+                    //第一次分割,直接前i个数
+                    dp[i][j] = cost(s, 0, i - 1);
+                } else {
+                    for (int l = j - 1; l < i; l++) {
+                        //前面1次+从位置到当前位置的 最小值
+                        dp[i][j] = Math.min(dp[i][j], dp[l][j - 1] + cost(s, l, i - 1));
+                    }
+                }
+            }
+        }
+        return dp[s.length()][k];
+    }
+
+    /**
+     * i-j字符,变成回文串需要的变化次数
+     */
+    public int cost(String s, int l, int r) {
+        int res = 0;
+        for (int i = l, j = r; i < j; i++, j--) {
+            if (s.charAt(i) != s.charAt(j)) {
+                res++;
+            }
+        }
+        return res;
+    }
+
+    public int videoStitching(int[][] clips, int t) {
+        //从i-j的片段需要的片段数
+        int[][] dp = new int[t + 1][t + 1];
+        for (int[] ints : dp) {
+            Arrays.fill(ints, 101);
+        }
+        //初始化
+        for (int[] clip : clips) {
+            for (int j = clip[0]; j <= clip[1]; j++) {
+                for (int k = j; k <= clip[1]; k++) {
+                    if (j <= t && k <= t) {
+                        dp[j][k] = 1;
+                    }
+                }
+            }
+        }
+        //
+        for (int i = 0; i <= t; i++) {
+            for (int j = 0; j <= t; j++) {
+                if (dp[i][j] == 101) {
+                    for (int k = i; k < j; k++) {
+                        dp[i][j] = Math.min(dp[i][k] + dp[k][j], dp[i][j]);
+                    }
+                }
+            }
+        }
+        return dp[0][t] == 101 ? -1 : dp[0][t];
+    }
+
+    public boolean divisorGame(int n) {
+        //动态规划
+
+        if (n == 1) {
+            return false;
+        }
+        //dp[i]存的是操作数为i时的玩家的获胜情况
+        boolean[] dp = new boolean[n + 1];
+
+        //初始化dp数组
+        dp[1] = false;
+        dp[2] = true;
+
+        //遍历3-N并求解整个dp数组
+        for (int i = 3; i <= n; i++) {
+            //先置dp[i]为false，符合条件则置true
+            dp[i] = false;
+
+            //玩家都以最佳状态，即玩家操作i后的操作数i-x应尽可能使对手输，即dp[i-x]应尽可能为false
+            //所以遍历x=1~i-1,寻找x的约数，使得dp[i-x]=false，那么dp[i]=true即当前操作数为i的玩家能获胜
+            //如果找不到则为false，会输掉
+            for (int x = 1; x < i; x++) {
+                if (i % x == 0 && !dp[i - x]) {
+                    dp[i] = true;
+                    break;
+                }
+            }
+        }
+        return dp[n];
+    }
+
+    public int waysToStep(int n) {
+        int[] dp = new int[Math.max(n + 1, 4)];
+        dp[1] = 1;
+        dp[2] = 2;
+        dp[3] = 4;
+        for (int i = 4; i <= n; i++) {
+            dp[i] = ((dp[i - 1] + dp[i - 2]) % 1000000007 + dp[i - 3]) % 1000000007;
+        }
+        return dp[n];
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().maxProduct(new int[]{-3, 0, 1, -2}));
+        System.out.println(new Dp()
+                .divisorGame(4));
     }
 }
