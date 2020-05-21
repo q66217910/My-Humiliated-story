@@ -298,16 +298,19 @@ public class Dp {
     }
 
     public List<Integer> findDisappearedNumbers(int[] nums) {
-        List<Integer> list = new ArrayList<>();
-        Arrays.sort(nums);
-        int j = 1;
-        for (int i = 0; i < nums.length; i++, j++) {
-            if (j != nums[i]) {
-                list.add(j);
-                i--;
+        for (int i = 0; i < nums.length; i++) {
+            int newIndex = Math.abs(nums[i]) - 1;
+            if (nums[newIndex] > 0) {
+                nums[newIndex] *= -1;
             }
         }
-        return list;
+        List<Integer> result = new LinkedList<Integer>();
+        for (int i = 1; i <= nums.length; i++) {
+            if (nums[i - 1] > 0) {
+                result.add(i);
+            }
+        }
+        return result;
     }
 
     public int[] sumZero(int n) {
@@ -564,7 +567,7 @@ public class Dp {
         dp[0] = 0;
         dp[1] = 1;
         for (int i = 2; i <= N; i++) {
-            dp[i] = dp[i - 1] + dp[i - 2];
+            dp[i] = (dp[i - 1] + dp[i - 2]) % 1000000007;
         }
         return dp[N];
     }
@@ -1165,6 +1168,37 @@ public class Dp {
         return ans;
     }
 
+    public String freqAlphabets(String s) {
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        while (i < s.length()) {
+            if (i < s.length() - 2 && s.charAt(i + 2) == '#') {
+                sb.append((char) ('a' + Integer.parseInt(s.substring(i, i + 2)) - 1));
+                i += 3;
+            } else {
+                sb.append((char) ('a' + Integer.parseInt(s.substring(i, i + 1)) - 1));
+                i++;
+            }
+        }
+        return sb.toString();
+    }
+
+    public int[] fraction(int[] cont) {
+        int[] ans = {1, 1};
+        int len = cont.length;
+        if (len == 0) return ans;
+        ans[1] = cont[len - 1];
+        for (int i = len - 2; i >= 0; i--) {
+            int tmp = ans[1];
+            ans[1] = cont[i] * ans[1] + ans[0];
+            ans[0] = tmp;
+        }
+        ;
+        ans[0] = ans[0] ^ ans[1];
+        ans[1] = ans[0] ^ ans[1];
+        ans[0] = ans[0] ^ ans[1];
+        return ans;
+    }
 
     public boolean checkSubarraySum(int[] nums, int k) {
         int sum = 0;
@@ -1371,6 +1405,38 @@ public class Dp {
             dp[i] = ((dp[i - 1] + dp[i - 2]) % 1000000007 + dp[i - 3]) % 1000000007;
         }
         return dp[n];
+    }
+
+    public int[] shortestToChar(String s, char c) {
+        int[] res = new int[s.length()];
+        int last = Integer.MAX_VALUE;
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == c) {
+                for (int j = last == Integer.MAX_VALUE ? 0 : last; j < i; j++) {
+                    res[j] = Math.min(Math.abs(j - last), Math.abs(j - i));
+                }
+                last = i;
+            }
+        }
+        for (int j = last == Integer.MAX_VALUE ? 0 : last; j < s.length(); j++) {
+            res[j] = Math.abs(j - last);
+        }
+        return res;
+    }
+
+    public boolean validMountainArray(int[] A) {
+        int N = A.length;
+        int i = 0;
+        // walk up
+        while (i+1 < N && A[i] < A[i+1])
+            i++;
+        // peak can't be first or last
+        if (i == 0 || i == N-1)
+            return false;
+        // walk down
+        while (i+1 < N && A[i] > A[i+1])
+            i++;
+        return i == N-1;
     }
 
     public static void main(String[] args) {

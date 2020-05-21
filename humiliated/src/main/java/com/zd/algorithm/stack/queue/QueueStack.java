@@ -1,4 +1,4 @@
-package com.zd.algorithm.stack;
+package com.zd.algorithm.stack.queue;
 
 import java.util.ArrayDeque;
 
