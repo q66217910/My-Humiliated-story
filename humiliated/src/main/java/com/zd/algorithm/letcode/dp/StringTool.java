@@ -1397,7 +1397,165 @@ public class StringTool {
         return sum - num == num;
     }
 
+    public boolean validPalindrome(String s) {
+        int left = 0;
+        int right = s.length() - 1;
+        return validPalindrome(s, left, right, 1);
+    }
+
+    public boolean validPalindrome(String s, int left, int right, int count) {
+        while (left < right) {
+            if (s.charAt(left) != s.charAt(right)) {
+                if (count == 0) {
+                    return false;
+                } else {
+                    count--;
+                    return validPalindrome(s, left + 1, right, count) || validPalindrome(s, left, right - 1, count);
+                }
+            } else {
+                left++;
+                right--;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 是否是回文串
+     */
+    public boolean isPalindrome(String s) {
+        String low = s.toLowerCase();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < low.length(); i++) {
+            if (Character.isLetterOrDigit(low.charAt(i))) {
+                sb.append(low.charAt(i));
+            }
+        }
+        return sb.toString().equals(sb.reverse().toString());
+    }
+
+
+    public int heightChecker(int[] heights) {
+        int count = 0;
+        int[] temp = Arrays.stream(heights).sorted().toArray();
+        for (int i = 0; i < heights.length; i++) {
+            if (heights[i] != temp[i]) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public String[] findWords(String[] words) {
+        if (words == null || words.length == 0) return new String[0];
+        //用长度为26的数组标识每个字母所在的行号
+        int[] map = {2, 3, 3, 2, 1, 2, 2, 2, 1, 2, 2, 2, 3, 3, 1, 1, 1, 1, 2, 1, 1, 3, 1, 3, 1, 3};
+        List<String> list = new ArrayList<String>();
+        for (String word : words) {
+            String tempWord = word.toUpperCase();
+            int temp = map[tempWord.charAt(0) - 65];
+            boolean flag = true;
+            //通过与首字母比较行号确定是否在同一行
+            for (int i = 1; i < tempWord.length(); i++) {
+                if (temp != map[tempWord.charAt(i) - 65]) {
+                    flag = false;
+                    break;
+                }
+            }
+            if (flag) list.add(word);
+        }
+        return list.toArray(new String[list.size()]);
+    }
+
+    public boolean judgeCircle(String moves) {
+        Map<Integer, Long> map = moves.chars().boxed().collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+        return map.getOrDefault(68, 0L).equals(map.getOrDefault(85, 0L)) && map.getOrDefault(82, 0L).equals(map.getOrDefault(76, 0L));
+    }
+
+    public List<Integer> selfDividingNumbers(int left, int right) {
+        List<Integer> list = new ArrayList<>();
+        for (int i = left; i <= right; i++) {
+            if (selfDividingNumbers(i)) {
+                list.add(i);
+            }
+        }
+        return list;
+    }
+
+    public boolean selfDividingNumbers(int num) {
+        int temp = num;
+        while (temp > 0) {
+            if ((temp % 10) == 0 || num % (temp % 10) != 0) {
+                return false;
+            }
+            temp /= 10;
+        }
+        return true;
+    }
+
+    public int[] diStringMatch(String S) {
+        int N = S.length();
+        int lo = 0, hi = N;
+        int[] ans = new int[N + 1];
+        for (int i = 0; i < N; ++i) {
+            if (S.charAt(i) == 'I')
+                ans[i] = lo++;
+            else
+                ans[i] = hi--;
+        }
+
+        ans[N] = lo;
+        return ans;
+    }
+
+    public int smallestRangeI(int[] A, int K) {
+        int min = Arrays.stream(A).min().orElse(0);
+        int max = Arrays.stream(A).max().orElse(0);
+        return Math.max(max - min - 2 * K, 0);
+    }
+
+    public List<String> commonChars(String[] A) {
+        int[] count = new int[26];
+        Arrays.fill(count, Integer.MAX_VALUE);
+
+        for (String str : A) {
+            int[] temp = new int[26];
+            for (int i = 0; i < 26; i++) temp[i] = 0;
+
+            for (char c : str.toCharArray()) temp[c - 'a']++;
+
+            for (int i = 0; i < 26; i++) count[i] = Math.min(count[i], temp[i]);
+        }
+
+        List<String> ans = new ArrayList<String>();
+        for (int i = 0; i < 26; i++) {
+            while (count[i] > 0) {
+                ans.add("" + (char) ('a' + i));
+                count[i]--;
+            }
+        }
+        return ans;
+    }
+
+    public int[] exchange(int[] nums) {
+        return Arrays.stream(nums).boxed().sorted(Comparator.<Integer, Integer>comparing(a -> a % 2).reversed()).mapToInt(Integer::intValue).toArray();
+    }
+
+    public boolean hasAlternatingBits(int n) {
+        int a = -1;
+        while (n > 0) {
+            int temp = n & 1;
+            if (temp == a) {
+                return false;
+            }
+            a = temp;
+            n = n >> 1;
+        }
+        return true;
+    }
+
     public static void main(String[] args) {
         System.out.println(new StringTool().repeatedSubstringPattern("aabaaba"));
+        System.out.println(new StringTool().hasAlternatingBits(7));
     }
 }

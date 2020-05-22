@@ -1,8 +1,7 @@
-package com.zd.algorithm.stack;
+package com.zd.algorithm.stack.queue;
 
 import lombok.Data;
 
-import java.util.Queue;
 import java.util.Stack;
 
 /**
