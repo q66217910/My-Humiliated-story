@@ -1,5 +1,6 @@
 package com.zd.algorithm.letcode.dp;
 
+import java.lang.reflect.Array;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -1204,8 +1205,199 @@ public class StringTool {
                 .toArray();
     }
 
+    public String[] uncommonFromSentences(String A, String B) {
+        Map<String, Long> map = Arrays.stream(A.split(" "))
+                .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+        for (String s : B.split(" ")) {
+            map.put(s, map.getOrDefault(s, 0L) + 1);
+        }
+        return map.entrySet()
+                .stream()
+                .filter(e -> e.getValue() == 1)
+                .map(Map.Entry::getKey)
+                .toArray(String[]::new);
+    }
+
+    public int[] getNoZeroIntegers(int n) {
+        for (int i = 1; i < n; i++) {
+            if (!isContainZero(i) && !isContainZero(n - i)) {
+                return new int[]{i, n - i};
+            }
+        }
+        return new int[2];
+    }
+
+    private boolean isContainZero(int n) {
+        while (n > 0) {
+            if (n % 10 == 0) {
+                return true;
+            }
+            n /= 10;
+        }
+        return false;
+    }
+
+    public int[] numSmallerByFrequency(String[] queries, String[] words) {
+        int[] ans = new int[queries.length];
+        for (int i = 0; i < queries.length; i++) {
+            int a = numSmallerByFrequency(queries[i]);
+            for (int j = 0; j < words.length; j++) {
+                if (a < numSmallerByFrequency(words[j])) {
+                    ans[i]++;
+                }
+            }
+        }
+        return ans;
+    }
+
+    /**
+     * 最小字母的出现频次
+     */
+    private int numSmallerByFrequency(String s) {
+        char[] chars = s.toCharArray();
+        Arrays.sort(chars);
+        int count = 1;
+        for (int i = 1; i < chars.length; i++) {
+            if (chars[i] == chars[i - 1]) {
+                count++;
+            } else {
+                return count;
+            }
+        }
+        return count;
+    }
+
+    public int compress(char[] chars) {
+        if (chars.length <= 1) {
+            return chars.length;
+        }
+        // 从 i = 1 开始遍历, 所以这里对 i = 0 的情况直接进行处理.
+        int index = 0;
+        int curr = 1;
+        for (int i = 1; i < chars.length; i++) {
+            if (chars[i] == chars[i - 1]) {
+                curr++;
+            } else {
+                if (curr != 1) {
+                    char[] array = String.valueOf(curr).toCharArray();
+                    for (char c : array) {
+                        chars[++index] = c;
+                    }
+                }
+                chars[++index] = chars[i];
+                curr = 1;
+            }
+        }
+        if (curr != 1) {
+            char[] array = String.valueOf(curr).toCharArray();
+            for (char c : array) {
+                chars[++index] = c;
+            }
+        }
+        return index + 1;
+    }
+
+    public int minMoves(int[] nums) {
+        Arrays.sort(nums);
+        int count = 0;
+        for (int i = nums.length - 1; i > 0; i--) {
+            count += nums[i] - nums[0];
+        }
+        return count;
+    }
+
+    public int findContentChildren(int[] g, int[] s) {
+        Arrays.sort(g);
+        Arrays.sort(s);
+        int count = 0;
+        for (int i = 0, j = 0; i < s.length; i++) {
+            if (j < g.length && s[i] >= g[j]) {
+                j++;
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public boolean repeatedSubstringPattern(String s) {
+        int n = s.length();
+        //i:重复的个数
+        for (int i = 1; i <= n / 2; i++) {
+            if (n % i != 0) {
+                continue;
+            }
+            boolean flag = true;
+            //循环i个的次数，判断每一个是否隔i个数相等
+            a:
+            for (int j = 0; j < i; j++) {
+                char c = s.charAt(j);
+                for (int k = j; k < n; k += i) {
+                    if (c != s.charAt(k)) {
+                        flag = false;
+                        break a;
+                    }
+                }
+            }
+            if (flag) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public int findRadius(int[] houses, int[] heaters) {
+        //排除两种情况
+        Arrays.sort(houses);
+        Arrays.sort(heaters);
+        if (heaters[0] >= houses[houses.length - 1]) {
+            return heaters[0] - houses[0];
+        }
+        if (heaters[heaters.length - 1] <= houses[0]) {
+            return houses[houses.length - 1] - heaters[heaters.length - 1];
+        }
+
+        int radius = 0;
+        int i = 0;
+        int j = 0;
+        if (houses[0] < heaters[0]) {
+            radius = heaters[0] - houses[0];
+        }
+        while (houses[i] <= heaters[j]) {
+            i++;
+        }
+        while (j < heaters.length - 1 && i < houses.length) {
+            if (houses[i] <= heaters[j + 1]) {
+                radius = Math.max(radius, Math.min(houses[i] - heaters[j], heaters[j + 1] - houses[i]));
+                i++;
+            } else {
+                j++;
+            }
+        }
+        if (i < houses.length) {
+            radius = Math.max(radius, houses[houses.length - 1] - heaters[heaters.length - 1]);
+        }
+
+        return radius;
+    }
+
+    public boolean checkPerfectNumber(int num) {
+        if (num <= 0) {
+            return false;
+        }
+        int sum = 0;
+        for (int i = 1; i * i <= num; i++) {
+            if (num % i == 0) {
+                sum += i;
+                if (i * i != num) {
+                    sum += num / i;
+                }
+
+            }
+        }
+        return sum - num == num;
+    }
 
     public static void main(String[] args) {
-        System.out.println(new StringTool().removePalindromeSub("ababb"));
+        System.out.println(new StringTool().repeatedSubstringPattern("aabaaba"));
     }
 }

@@ -5,6 +5,7 @@ import sun.misc.Unsafe;
 
 import java.lang.reflect.Array;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -1371,6 +1372,47 @@ public class Dp {
             dp[i] = ((dp[i - 1] + dp[i - 2]) % 1000000007 + dp[i - 3]) % 1000000007;
         }
         return dp[n];
+    }
+
+    public int findSpecialInteger(int[] arr) {
+        if (arr.length == 1) {
+            return arr[0];
+        }
+        int n = arr.length, temp = 1;
+        for (int i = 1; i < n; i++) {
+            if (arr[i] == arr[i - 1]) {
+                temp++;
+            } else {
+                temp = 1;
+            }
+            if (temp * 4 > n) {
+                return arr[i];
+            }
+        }
+        return -1;
+    }
+
+    public String[] findOcurrences(String text, String first, String second) {
+        List<String> list = new ArrayList<>();
+        String[] s = text.split(" ");
+        for (int i = 1; i < s.length - 1; i++) {
+            if (s[i - 1].equals(first) && s[i].equals(second)) {
+                list.add(s[i + 1]);
+            }
+        }
+        return list.stream().toArray(String[]::new);
+    }
+
+    public int twoCitySchedCost(int[][] costs) {
+        int sum = 0;
+        //根据花费的差值排序
+        Arrays.sort(costs, Comparator.comparing(a -> a[0] - a[1]));
+        //前面是差值小的选大的,后面差值大的选小的
+        for (int i = 0; i < costs.length / 2; i++) {
+            sum += costs[i][0];
+            sum += costs[costs.length - 1 - i][1];
+        }
+        return sum;
     }
 
     public static void main(String[] args) {
