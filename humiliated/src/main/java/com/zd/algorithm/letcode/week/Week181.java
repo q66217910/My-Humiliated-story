@@ -2,6 +2,7 @@ package com.zd.algorithm.letcode.week;
 
 import com.google.common.collect.Lists;
 
+import java.lang.reflect.Array;
 import java.math.BigInteger;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -212,8 +213,88 @@ public class Week181 {
         return count;
     }
 
+    public int isPrefixOfWord(String sentence, String searchWord) {
+        String[] sentences = sentence.split(" ");
+        for (int i = 0; i < sentences.length; i++) {
+            boolean flag = true;
+            if (sentences[i].length() < searchWord.length()) {
+                continue;
+            }
+            for (int j = 0; j < searchWord.length(); j++) {
+                if (sentences[i].charAt(j) != searchWord.charAt(j)) {
+                    flag = false;
+                    break;
+                }
+            }
+            if (flag) {
+                return i + 1;
+            }
+        }
+        return -1;
+    }
+
+    public int maxVowels(String s, int k) {
+        int result = 0, temp = 0;
+        for (int i = 0; i < k; i++) {
+            if (isA(s.charAt(i))) {
+                temp++;
+            }
+        }
+        result = temp;
+        for (int i = k; i < s.length(); i++) {
+            if (isA(s.charAt(i - k))) temp--;
+            if (isA(s.charAt(i))) temp++;
+            result = Math.max(result, temp);
+        }
+        return result;
+    }
+
+    private boolean isA(char a) {
+        switch (a) {
+            case 'a':
+            case 'e':
+            case 'i':
+            case 'o':
+            case 'u':
+                return true;
+        }
+        return false;
+    }
+
+    public int maxDotProduct(int[] nums1, int[] nums2) {
+        int m = nums1.length;
+        int n = nums2.length;
+        int[][] dp = new int[m][n];
+        for (int i = 0; i < m; i++) {
+            Arrays.fill(dp[i], -100000000);
+        }
+        int ret = -100000000;
+        dp[0][0] = nums1[0] * nums2[0];
+        //初始化
+        for (int i = 1; i < n; i++) {
+            //选择一个时的最大值
+            dp[0][i] = Math.max(dp[0][i - 1], nums1[0] * nums2[i]);
+            ret = Math.max(dp[0][i], ret);
+        }
+        for (int i = 1; i < m; i++) {
+            //选择一个时的最大值
+            dp[i][0] = Math.max(dp[i - 1][0], nums1[i] * nums2[0]);
+            ret = Math.max(dp[i][0], ret);
+        }
+        for (int i = 1; i < m; i++) {
+            for (int j = 1; j < n; j++) {
+                //去掉num1当前，或者去掉num2当前，或者只取nums1[i] * nums2[j]，或者前一个最大值加上当前乘积
+                dp[i][j] = Math.max(dp[i][j - 1],
+                        Math.max(dp[i - 1][j],
+                                Math.max(dp[i - 1][j - 1] + nums1[i] * nums2[j], nums1[i] * nums2[j])));
+                ret = Math.max(dp[i][j], ret);
+            }
+        }
+        return ret;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Week181()
-                .numPoints(new int[][]{{-2, 0}, {2, 0}, {0, 2}, {0, -2}}, 2));
+        System.out.println(new Week181().maxDotProduct(new int[]{2, 1, -2, 5}, new int[]{3, 0, -6}));
+        System.out.println(new Week181().maxDotProduct(new int[]{1, 1}, new int[]{-1, -1}));
     }
 }

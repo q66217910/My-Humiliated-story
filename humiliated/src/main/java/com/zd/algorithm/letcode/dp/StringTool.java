@@ -1,14 +1,14 @@
 package com.zd.algorithm.letcode.dp;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.stream.*;
 
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 public class StringTool {
 
@@ -1362,7 +1362,238 @@ public class StringTool {
         return true;
     }
 
+    public int distributeCandies(int[] candies) {
+        Map<Integer, Long> map = Arrays.stream(candies)
+                .boxed()
+                .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+        return Math.min(map.size(), candies.length / 2);
+    }
+
+    public int maxNumberOfBalloons(String text) {
+        Map<Integer, Long> map = text.chars()
+                .boxed()
+                .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+        return (int) Math.min(map.getOrDefault(97, 0L),
+                Math.min(map.getOrDefault(98, 0L),
+                        Math.min(map.getOrDefault(108, 0L) / 2,
+                                Math.min(map.getOrDefault(110, 0L),
+                                        map.getOrDefault(111, 0L) / 2))));
+    }
+
+    class Employee {
+        public int id;
+        public int importance;
+        public List<Integer> subordinates;
+    }
+
+    public int getImportance(List<Employee> employees, int id) {
+        Map<Integer, Employee> map = employees.stream()
+                .collect(Collectors.toMap(a -> a.id, Function.identity()));
+        return getImportance(map, id);
+    }
+
+    public int getImportance(Map<Integer, Employee> map, int id) {
+        int sum = 0;
+        Employee employee = map.get(id);
+        if (employee != null) {
+            sum += employee.importance;
+            for (Integer subordinate : employee.subordinates) {
+                Employee a = map.get(subordinate);
+                if (a.subordinates.size() > 0) {
+                    sum += getImportance(map, a.id);
+                } else {
+                    sum += a.importance;
+                }
+            }
+        }
+        return sum;
+    }
+
+    public int[] sumEvenAfterQueries(int[] A, int[][] queries) {
+        int[] answer = new int[A.length];
+        int S = 0;
+        for (int x : A)
+            if (x % 2 == 0)
+                S += x;
+        for (int i = 0; i < queries.length; i++) {
+            int val = queries[i][0], index = queries[i][1];
+            if (A[index] % 2 == 0) S -= A[index];
+            A[index] += val;
+            if (A[index] % 2 == 0) S += A[index];
+            answer[i] = S;
+        }
+        return answer;
+    }
+
+    public String minWindow(String s, String t) {
+        String result = "";
+        List<Integer> index = new LinkedList<>();
+        Map<Integer, Long> nums = t.chars()
+                .boxed()
+                .collect(Collectors.groupingBy(Function.identity(),
+                        Collectors.counting()));
+        Map<Integer, Long> map = new HashMap<>();
+        //窗口滑动
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            //判断元素是否在数组中
+            if (nums.containsKey((int) c)) {
+                index.add(i);
+                map.put((int) c, map.getOrDefault((int) c, 0L) + 1);
+                //判断数组元素是否相同
+                //记录
+                if (minWindowContain(map, nums)) {
+                    if ("".equals(result)) {
+                        result = s.substring(index.get(0), i + 1);
+                    }
+                    Iterator<Integer> it = index.iterator();
+                    while (it.hasNext()) {
+                        Integer k = it.next();
+                        //缩小
+                        map.put((int) s.charAt(k), map.getOrDefault((int) s.charAt(k), 0L) - 1);
+                        if (minWindowContain(map, nums)) {
+                            it.remove();
+                        } else {
+                            if (i - k < result.length()) {
+                                result = s.substring(k, i + 1);
+                            }
+                            map.put((int) s.charAt(k), map.getOrDefault((int) s.charAt(k), 0L) + 1);
+                            break;
+                        }
+                    }
+                }
+
+            }
+        }
+        return result;
+    }
+
+    public boolean minWindowContain(Map<Integer, Long> map, Map<Integer, Long> nums) {
+        for (Map.Entry<Integer, Long> entry : nums.entrySet()) {
+            if (map.getOrDefault(entry.getKey(), 0L) < entry.getValue()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public int minCostToMoveChips(int[] chips) {
+        //偶数
+        int[] b = Arrays.stream(chips).filter(a -> a % 2 == 0).toArray();
+        //奇数
+        int[] c = Arrays.stream(chips).filter(a -> a % 2 == 1).toArray();
+        return Math.min(b.length, c.length);
+    }
+
+    public int numSpecialEquivGroups(String[] A) {
+        Set<String> seen = new HashSet<>();
+        for (String S : A) {
+            int[] count = new int[52];
+            for (int i = 0; i < S.length(); ++i)
+                count[S.charAt(i) - 'a' + 26 * (i % 2)]++;
+            seen.add(Arrays.toString(count));
+        }
+        return seen.size();
+    }
+
+    public String mostCommonWord(String paragraph, String[] banned) {
+        //数组转Set
+        Set<String> set = new HashSet<>(Arrays.asList(banned));
+        set.add("");
+        paragraph += ".";
+        //结果单词
+        String res = " ";
+        //最大单词出现次数
+        int times = 0;
+        //记录单词出现次数的map
+        Map<String, Integer> map = new HashMap<>();
+        //i,k为双指针
+        int i = 0;
+        for (int k = 0; k < paragraph.length(); k++) {
+            char c = paragraph.charAt(k);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                continue;
+            } else {
+                //利用双指针截取出一个单词
+                String word = paragraph.substring(i, k);
+                //统一将单词转为小写
+                word = word.toLowerCase();
+                if (!set.contains(word)) {
+                    map.put(word, map.getOrDefault(word, 0) + 1);
+                    //最大值的获取
+                    if (map.get(word) > times) {
+                        res = word;
+                        times = map.get(word);
+                    }
+                }
+                i = k + 1;
+            }
+        }
+        return res;
+    }
+
+    public List<String> letterCasePermutation(String s) {
+        return letterCasePermutation(s, 0);
+    }
+
+    public List<String> letterCasePermutation(String s, int index) {
+        char[] chars = s.toCharArray();
+        List<String> list = new LinkedList<>();
+        list.add(s);
+        for (int i = index; i < s.length(); i++) {
+            if (chars[i] >= 'a' && chars[i] <= 'z') {
+                char[] c = Arrays.copyOfRange(chars, 0, chars.length);
+                c[i] -= 32;
+                String s1 = new String(c);
+                list.addAll(letterCasePermutation(s1, i + 1));
+            } else if (chars[i] >= 'A' && chars[i] <= 'Z') {
+                char[] c = Arrays.copyOfRange(chars, 0, chars.length);
+                c[i] += 32;
+                String s1 = new String(c);
+                list.addAll(letterCasePermutation(s1, i + 1));
+            }
+        }
+        return list.stream().distinct().collect(Collectors.toList());
+    }
+
+    public int lastStoneWeight(int[] stones) {
+        int index = stones.length - 1;
+        for (int i = 0; i < stones.length - 1; i++) {     //通过stones.length来判断需要操作的次数。（不用将stones.length == 1的情况单独考虑）
+            Arrays.sort(stones);                        //将sort放在循环体的开始。（避免在循环体外再写一次重复的sort（））
+            stones[index] -= stones[index - 1];           //两种不同情况使用同一表达式处理。（）
+            stones[index - 1] = 0;
+        }
+        return stones[stones.length - 1];
+    }
+
+    public boolean checkRecord(String s) {
+        Map<Character, Integer> count = new HashMap<>();
+        for (int i = 0; i < s.length(); i++) {
+            count.put(s.charAt(i), count.getOrDefault(s.charAt(i), 0) + 1);
+        }
+        if (count.getOrDefault('A', 0) <= 1) {
+            for (int i = 2; i < s.length(); i++) {
+                //连续两个L以上
+                if (s.charAt(i) == s.charAt(i - 1)
+                        && s.charAt(i - 1) == s.charAt(i - 2)
+                        && s.charAt(i) == 'L') {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    public String dayOfTheWeek(int day, int month, int year) {
+        String[] weeks = new String[]{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday","Sunday"};
+        int value = LocalDate.of(year, month, day)
+                .getDayOfWeek()
+                .getValue();
+        return weeks[value];
+    }
+
     public static void main(String[] args) {
-        System.out.println(new StringTool().hasAlternatingBits(7));
+        System.out.println(new StringTool().dayOfTheWeek(31,8,2019));
     }
 }
