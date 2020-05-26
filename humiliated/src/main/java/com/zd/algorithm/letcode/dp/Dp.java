@@ -5,6 +5,7 @@ import sun.misc.Unsafe;
 
 import java.lang.reflect.Array;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -298,19 +299,16 @@ public class Dp {
     }
 
     public List<Integer> findDisappearedNumbers(int[] nums) {
-        for (int i = 0; i < nums.length; i++) {
-            int newIndex = Math.abs(nums[i]) - 1;
-            if (nums[newIndex] > 0) {
-                nums[newIndex] *= -1;
+        List<Integer> list = new ArrayList<>();
+        Arrays.sort(nums);
+        int j = 1;
+        for (int i = 0; i < nums.length; i++, j++) {
+            if (j != nums[i]) {
+                list.add(j);
+                i--;
             }
         }
-        List<Integer> result = new LinkedList<Integer>();
-        for (int i = 1; i <= nums.length; i++) {
-            if (nums[i - 1] > 0) {
-                result.add(i);
-            }
-        }
-        return result;
+        return list;
     }
 
     public int[] sumZero(int n) {
@@ -567,7 +565,7 @@ public class Dp {
         dp[0] = 0;
         dp[1] = 1;
         for (int i = 2; i <= N; i++) {
-            dp[i] = (dp[i - 1] + dp[i - 2]) % 1000000007;
+            dp[i] = dp[i - 1] + dp[i - 2];
         }
         return dp[N];
     }
@@ -1437,6 +1435,47 @@ public class Dp {
         while (i+1 < N && A[i] > A[i+1])
             i++;
         return i == N-1;
+    }
+
+    public int findSpecialInteger(int[] arr) {
+        if (arr.length == 1) {
+            return arr[0];
+        }
+        int n = arr.length, temp = 1;
+        for (int i = 1; i < n; i++) {
+            if (arr[i] == arr[i - 1]) {
+                temp++;
+            } else {
+                temp = 1;
+            }
+            if (temp * 4 > n) {
+                return arr[i];
+            }
+        }
+        return -1;
+    }
+
+    public String[] findOcurrences(String text, String first, String second) {
+        List<String> list = new ArrayList<>();
+        String[] s = text.split(" ");
+        for (int i = 1; i < s.length - 1; i++) {
+            if (s[i - 1].equals(first) && s[i].equals(second)) {
+                list.add(s[i + 1]);
+            }
+        }
+        return list.stream().toArray(String[]::new);
+    }
+
+    public int twoCitySchedCost(int[][] costs) {
+        int sum = 0;
+        //根据花费的差值排序
+        Arrays.sort(costs, Comparator.comparing(a -> a[0] - a[1]));
+        //前面是差值小的选大的,后面差值大的选小的
+        for (int i = 0; i < costs.length / 2; i++) {
+            sum += costs[i][0];
+            sum += costs[costs.length - 1 - i][1];
+        }
+        return sum;
     }
 
     public static void main(String[] args) {

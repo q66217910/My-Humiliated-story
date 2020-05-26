@@ -25,6 +25,19 @@ public class Bit {
         return x |= 1;
     }
 
+    /**
+     * 补数
+     */
+    public int findComplement(int num) {
+        long i = 1;
+        while (i <= num)
+            i = i << 1;
+        i -= 1;
+        return (int) i ^ num;
+    }
+
+
+
     public static void main(String[] args) {
         System.out.println(last1(2));
     }
