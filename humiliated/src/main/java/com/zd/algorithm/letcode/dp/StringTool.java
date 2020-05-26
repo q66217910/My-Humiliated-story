@@ -1586,14 +1586,43 @@ public class StringTool {
     }
 
     public String dayOfTheWeek(int day, int month, int year) {
-        String[] weeks = new String[]{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday","Sunday"};
+        String[] weeks = new String[]{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
         int value = LocalDate.of(year, month, day)
                 .getDayOfWeek()
                 .getValue();
         return weeks[value];
     }
 
+    public List<String> subdomainVisits(String[] cpdomains) {
+        Map<String, Integer> count = new HashMap<>();
+        for (int i = 0; i < cpdomains.length; i++) {
+            String[] s = cpdomains[i].split(" ");
+            Integer c = Integer.parseInt(s[0]);
+            String web = s[1];
+            while (web.contains(".")) {
+                count.put(web, count.getOrDefault(web, 0) + c);
+                web = web.substring(web.indexOf(".") + 1);
+            }
+            count.put(web, count.getOrDefault(web, 0) + c);
+        }
+        return count.entrySet().stream().map(entry -> entry.getValue() + " " + entry.getKey()).collect(Collectors.toList());
+    }
+
+    public int subarraysDivByK(int[] A, int K) {
+        Map<Integer, Integer> map = new HashMap<>();
+        map.put(0, 1);
+        //每一步和
+        int sum = 0, res = 0;
+        for (int value : A) {
+            sum += value;
+            int modulus = (sum % K + K) % K;
+            res += map.getOrDefault(modulus, 0);
+            map.put(modulus, map.getOrDefault(modulus, 0) + 1);
+        }
+        return res;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new StringTool().dayOfTheWeek(31,8,2019));
+        System.out.println(new StringTool().subarraysDivByK(new int[]{4,5,0,-2,-3,1},5));
     }
 }
