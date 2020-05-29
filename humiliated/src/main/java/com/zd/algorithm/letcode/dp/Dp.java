@@ -1426,15 +1426,15 @@ public class Dp {
         int N = A.length;
         int i = 0;
         // walk up
-        while (i+1 < N && A[i] < A[i+1])
+        while (i + 1 < N && A[i] < A[i + 1])
             i++;
         // peak can't be first or last
-        if (i == 0 || i == N-1)
+        if (i == 0 || i == N - 1)
             return false;
         // walk down
-        while (i+1 < N && A[i] > A[i+1])
+        while (i + 1 < N && A[i] > A[i + 1])
             i++;
-        return i == N-1;
+        return i == N - 1;
     }
 
     public int findSpecialInteger(int[] arr) {
@@ -1476,6 +1476,21 @@ public class Dp {
             sum += costs[costs.length - 1 - i][1];
         }
         return sum;
+    }
+
+    public double largestTriangleArea(int[][] points) {
+        int N = points.length;
+        double ans = 0;
+        for (int i = 0; i < N; ++i)
+            for (int j = i + 1; j < N; ++j)
+                for (int k = j + 1; k < N; ++k)
+                    ans = Math.max(ans, area(points[i], points[j], points[k]));
+        return ans;
+    }
+
+    public double area(int[] P, int[] Q, int[] R) {
+        return 0.5 * Math.abs(P[0] * Q[1] + Q[0] * R[1] + R[0] * P[1]
+                - P[1] * Q[0] - Q[1] * R[0] - R[1] * P[0]);
     }
 
     public static void main(String[] args) {
