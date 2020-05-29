@@ -1,7 +1,9 @@
 package com.zd.algorithm.stack;
 
+import com.google.common.collect.Lists;
 import lombok.Data;
 
+import java.util.List;
 import java.util.Stack;
 
 /**
@@ -39,7 +41,7 @@ public class HanoiTower {
     }
 
     private int stackToStack(Action[] record, Action preAction, Action nowAction, Stack<Integer> from, Stack<Integer> to) {
-        if ((record[0] != preAction && from.peek() < to.peek())||to.isEmpty()) {
+        if (record[0] != preAction && from.peek() < to.peek()) {
             to.push(from.pop());
             record[0] = nowAction;
             return 1;
@@ -47,12 +49,33 @@ public class HanoiTower {
         return 0;
     }
 
+    public void hanota(List<Integer> A, List<Integer> B, List<Integer> C) {
+        hanoi(A.size(), A, B, C);
+    }
+
+    private void hanoi(int n, List<Integer> A, List<Integer> B, List<Integer> C) {
+        if (n > 0) {
+            //先将前n-1个碟子由A通过C移到B
+            hanoi(n - 1, A, C, B);
+            //将第n个碟子由A移到C
+            move(A, C);
+            //最后将前n-1个碟子由B通过A移到C
+            hanoi(n - 1, B, A, C);
+        }
+    }
+
+    private void move( List<Integer> A, List<Integer> B) {
+        B.add(A.remove(A.size() - 1));
+    }
+
+
     public enum Action {
         NO, LTOM, MTOL, MTOR, RTOM
     }
 
     public static void main(String[] args) {
         HanoiTower hanoiTower = new HanoiTower(4);
-        System.out.println(hanoiTower.hanoi());
+        hanoiTower.hanota(Lists.newArrayList(1, 2, 3)
+                , Lists.newArrayList(), Lists.newArrayList());
     }
 }
