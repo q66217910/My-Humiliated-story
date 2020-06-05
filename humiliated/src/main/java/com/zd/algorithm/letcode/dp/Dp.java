@@ -5,6 +5,7 @@ import sun.misc.Unsafe;
 
 import java.lang.reflect.Array;
 import java.util.*;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -1493,8 +1494,152 @@ public class Dp {
                 - P[1] * Q[0] - Q[1] * R[0] - R[1] * P[0]);
     }
 
+    public int rotatedDigits(int n) {
+        return (int) IntStream.range(1, n + 1).filter(this::isRotatedDigits).count();
+    }
+
+    private boolean isRotatedDigits(int i) {
+        int count = 0;
+        while (i > 0) {
+            int a = i % 10;
+            if (a == 3 || a == 4 || a == 7) {
+                return false;
+            }
+            if (a == 2 || a == 5 || a == 6 || a == 9) {
+                count++;
+            }
+            i /= 10;
+        }
+        return count > 0;
+    }
+
+    public int findShortestSubArray(int[] nums) {
+        List<Integer> collect = Arrays.stream(nums).boxed().collect(Collectors.toList());
+        Map<Integer, Long> map = Arrays.stream(nums)
+                .boxed()
+                .collect(Collectors.groupingBy(Function.identity(),
+                        Collectors.counting()));
+        Integer i = map.entrySet().stream().sorted(Map.Entry.<Integer, Long>comparingByValue().reversed()
+                .thenComparing(v -> collect.lastIndexOf(v.getKey()) - collect.indexOf(v.getKey()))).findFirst().map(Map.Entry::getKey).get();
+        return collect.lastIndexOf(i) - collect.indexOf(i) + 1;
+    }
+
+    public String[] findRelativeRanks(int[] nums) {
+        List<Integer> list = Arrays.stream(nums)
+                .boxed()
+                .sorted(Comparator.<Integer, Integer>comparing(Function.identity()).reversed())
+                .collect(Collectors.toList());
+        String[] res = new String[nums.length];
+        for (int i = 0; i < nums.length; i++) {
+            int index = list.indexOf(nums[i]);
+            if (index == 0) {
+                res[i] = "Gold Medal";
+            } else if (index == 1) {
+                res[i] = "Silver Medal";
+            } else if (index == 2) {
+                res[i] = "Bronze Medal";
+            } else {
+                res[i] = String.valueOf(index + 1);
+            }
+        }
+        return res;
+    }
+
+    public boolean canPlaceFlowers(int[] flowerbed, int n) {
+        int count = 0;
+        for (int i = 0; i < flowerbed.length; i++) {
+            if (flowerbed[i] == 0) {
+                //没种植花
+                int j = i > 0 ? flowerbed[i - 1] : 0;
+                int k = i < flowerbed.length - 1 ? flowerbed[i + 1] : 0;
+                if (j == 0 && k == 0) {
+                    //若前后都没有则种上花
+                    count++;
+                    flowerbed[i] = 1;
+                }
+            }
+        }
+        return count >= n;
+    }
+
+    public int[] findErrorNums(int[] nums) {
+        Arrays.sort(nums);
+        int[] res = new int[2];
+        for (int i = 0, j = 1; i < nums.length; i++) {
+            if (i > 0 && nums[i] == nums[i - 1]) {
+                //重复
+                res[0] = nums[i - 1];
+                continue;
+            }
+            if (nums[i] != j && res[1] == 0) {
+                //缺失的数据
+                res[1] = j;
+            }
+            j++;
+        }
+        if (res[1] == 0) {
+            res[1] = nums.length;
+        }
+        return res;
+    }
+
+    public boolean checkPossibility(int[] nums) {
+        if (nums.length < 3) {
+            return true;
+        }
+        int count = 0;
+        for (int i = 0; i < nums.length - 1; i++) {
+            if (nums[i] > nums[i + 1]) {
+                count++;
+                if (count > 1) {
+                    break;
+                }
+                if (i - 1 >= 0 && nums[i - 1] > nums[i + 1]) {
+                    nums[i + 1] = nums[i];
+                } else {
+                    nums[i] = nums[i + 1];
+                }
+            }
+        }
+        return count <= 1;
+    }
+
+    public double new21Game(int n, int k, int w) {
+        if (k == 0) {
+            return 1;
+        }
+        //最多能抽出这么大的数，dp；抽出这个数的概率
+        double[] dp = new double[w + k];
+        //初始化最后一次的值
+        for (int i = k; i <= Math.min(k + w, n); i++) {
+            dp[i] = 1;
+        }
+        dp[k - 1] = 1.0 * Math.min(n - k + 1, w) / w;
+        //算出所有数抽到的概率
+        for (int i = k - 2; i >= 0; i--) {
+            dp[i] = dp[i + 1] - (dp[i + w + 1] - dp[i + 1]) / w;
+        }
+        return dp[0];
+    }
+
+    public String licenseKeyFormatting(String s, int k) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = s.length() - 1; i >= 0; i--) {
+            char c = s.charAt(i);
+            if (c != '-') {
+                if (sb.length() % (k + 1) == k) {
+                    sb.append('-');
+                }
+                sb.append(Character.toUpperCase(c));
+            }
+        }
+        return sb.reverse().toString();
+    }
+
+
     public static void main(String[] args) {
-        System.out.println(new Dp()
-                .divisorGame(4));
+        System.out.println(new Dp().new21Game(2, 2, 3));
+        System.out.println(new Dp().new21Game(6, 1, 10));
+        System.out.println(new Dp().new21Game(21, 17, 10));
     }
 }
