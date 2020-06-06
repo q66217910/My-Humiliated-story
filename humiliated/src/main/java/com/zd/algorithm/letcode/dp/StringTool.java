@@ -1,15 +1,12 @@
 package com.zd.algorithm.letcode.dp;
 
-import java.lang.reflect.Array;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.*;
-import java.util.function.Function;
-import java.util.stream.*;
+import com.google.common.collect.Comparators;
 
+import java.time.LocalDate;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 public class StringTool {
 
@@ -1778,7 +1775,7 @@ public class StringTool {
     }
 
     public String dayOfTheWeek(int day, int month, int year) {
-        String[] weeks = new String[]{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday","Sunday"};
+        String[] weeks = new String[]{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
         int value = LocalDate.of(year, month, day)
                 .getDayOfWeek()
                 .getValue();
@@ -1814,10 +1811,422 @@ public class StringTool {
         return res;
     }
 
+    public int[] sortArrayByParityII(int[] A) {
+        int j = 1;
+        for (int i = 0; i < A.length; i += 2) {
+            if (A[i] % 2 == 1) {
+                while (A[j] % 2 == 1) {
+                    j += 2;
+                }
+                int tmp = A[i];
+                A[i] = A[j];
+                A[j] = tmp;
+            }
+        }
+        return A;
+    }
+
+    public int largestRectangleArea(int[] heights) {
+        int res = 0;
+        for (int i = 0; i < heights.length; i++) {
+            int min = Integer.MAX_VALUE;
+            //从左向右
+            for (int j = i; j < heights.length; j++) {
+                //从左向右
+                //最小值
+                min = Math.min(min, heights[j]);
+                //宽*高
+                res = Math.max((j - i + 1) * min, res);
+            }
+        }
+        return res;
+    }
+
+    public boolean canBeEqual(int[] target, int[] arr) {
+        Arrays.sort(target);
+        Arrays.sort(arr);
+        for (int i = 0; i < target.length; i++) {
+            if (target[i] != arr[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public boolean hasAllCodes(String s, int k) {
+        //生成2进制子串
+        Set<String> set = new HashSet<>();
+        for (int i = k; i <= s.length(); i++) {
+            set.add(s.substring(i - k, i));
+        }
+        return set.size() == Math.pow(2, k);
+    }
+
+    public List<Boolean> checkIfPrerequisite(int n, int[][] prerequisites, int[][] queries) {
+        List<Boolean> res = new ArrayList<>();
+        boolean[][] pre = new boolean[n][n];
+        boolean[] resolved = new boolean[n];
+        for (int i = 0; i < prerequisites.length; i++) {
+            pre[prerequisites[i][1]][prerequisites[i][0]] = true;
+        }
+        for (int i = 0; i < n; i++) {
+            find(pre, resolved, i);
+        }
+
+        for (int i = 0; i < queries.length; i++) {
+            res.add(pre[queries[i][1]][queries[i][0]]);
+        }
+        return res;
+    }
+
+    private void find(boolean[][] pre, boolean[] resolved, int i) {
+        if (resolved[i]) {
+            return;
+        }
+        for (int k = 0; k < resolved.length; k++) {
+            if (pre[i][k]) {
+                find(pre, resolved, k);
+                for (int j = 0; j < resolved.length; j++) {
+                    pre[i][j] = pre[i][j] || pre[k][j];
+                }
+            }
+        }
+        resolved[i] = true;
+    }
+
+    public int cherryPickup(int[][] grid) {
+        int res = 0;
+        int n = grid.length;
+        int m = grid[0].length;
+        int[][][] dp = new int[n][m][m];
+        dp[0][0][m - 1] = grid[0][0] + grid[0][m - 1];
+        for (int i = 1; i < n; i++) {
+            for (int j = 0; j < Math.min(i + 1, m); j++) {
+                for (int k = m - 1; k >= Math.max(m - 1 - i, j); k--) {
+                    dp[i][j][k] = Math.max(j > 0 ? dp[i - 1][j - 1][k - 1] : 0,
+                            Math.max(j > 0 ? dp[i - 1][j - 1][k] : 0,
+                                    Math.max(k < m - 1 && j > 0 ? dp[i - 1][j - 1][k + 1] : 0,
+                                            Math.max(k > 0 && j < k ? dp[i - 1][j][k - 1] : 0,
+                                                    Math.max(dp[i - 1][j][k],
+                                                            Math.max(k < m - 1 ? dp[i - 1][j][k + 1] : 0,
+
+                                                                    Math.max(k > 0 && j < m - 1 && j + 1 <= k - 1 ? dp[i - 1][j + 1][k - 1] : 0,
+                                                                            Math.max(j < m - 1 && j < k ? dp[i - 1][j + 1][k] : 0,
+                                                                                    j < m - 1 && k < m - 1 ? dp[i - 1][j + 1][k + 1] : 0))))))));
+                    int value = j == k ? grid[i][j] : grid[i][j] + grid[i][k];
+                    dp[i][j][k] += value;
+                    res = Math.max(dp[i][j][k], res);
+                }
+            }
+        }
+        return res;
+    }
+
+
+    public int maxProduct(int[] nums) {
+        int res = 0;
+        for (int i = 0; i < nums.length; i++) {
+            for (int j = i + 1; j < nums.length; j++) {
+                res = Math.max(res, (nums[i] - 1) * (nums[j] - 1));
+            }
+        }
+        return res;
+    }
+
+    public int maxArea(int h, int w, int[] horizontalCuts, int[] verticalCuts) {
+        Arrays.sort(horizontalCuts);
+        Arrays.sort(verticalCuts);
+        int hight = 0, wed = 0;
+        //先竖切，记录高
+        for (int i = 0; i <= horizontalCuts.length; i++) {
+            hight = Math.max(hight, (i == horizontalCuts.length ? h : horizontalCuts[i]) - (i > 0 ? horizontalCuts[i - 1] : 0));
+        }
+        for (int j = 0; j <= verticalCuts.length; j++) {
+            wed = Math.max(wed, (j == verticalCuts.length ? w : verticalCuts[j]) - (j > 0 ? verticalCuts[j - 1] : 0));
+        }
+        return (int) ((long) ((hight * wed) % (Math.pow(10, 9) + 7)));
+    }
+
+    public int minReorder(int n, int[][] connections) {
+        Map<Integer, List<Integer>> map1 = Arrays.stream(connections).collect(Collectors.groupingBy(a -> a[0],
+                Collectors.mapping(a -> a[1], Collectors.toList())));
+        Map<Integer, List<Integer>> map2 = Arrays.stream(connections).collect(Collectors.groupingBy(a -> a[1],
+                Collectors.mapping(a -> a[0], Collectors.toList())));
+        //寻找能到达的城市
+        Queue<Integer> queue = new ArrayDeque<>();
+        queue.add(0);
+        //set里包含了所以可以达的
+        Set<Integer> set = new HashSet<>();
+        set.add(0);
+        int count = 0;
+        while (!queue.isEmpty()) {
+            Integer value = queue.poll();
+            //要反的
+            List<Integer> list1 = map1.getOrDefault(value, new ArrayList<>());
+            for (Integer a : list1) {
+                if (!set.contains(a)) {
+                    set.add(a);
+                    queue.add(a);
+                    count++;
+                }
+            }
+
+            List<Integer> list2 = map2.getOrDefault(value, new ArrayList<>());
+            for (Integer a : list2) {
+                if (!set.contains(a)) {
+                    set.add(a);
+                    queue.add(a);
+                }
+            }
+        }
+        return count;
+    }
+
+
+    public double getProbability(int[] balls) {
+        //总数
+        int k = balls.length;
+        int n = Arrays.stream(balls).sum() / 2;
+        double[] fact = new double[2 * n + 1];
+        fact[0] = 1;
+        //求阶乘
+        for (int i = 1; i <= 2 * n; i++) {
+            fact[i] = fact[i - 1] * i;
+        }
+        // 总的排列方法数      (2n的阶乘 除以 重复个数的阶乘)
+        double total = fact[2 * n];
+        for (int ball : balls) {
+            total /= fact[ball];
+        }
+
+        int[][] dp = new int[2 * n + 1][2 * k + 1];
+        dp[0][k] = 1;
+        int num = 0;
+
+        for (int i = 0; i < k; i++) {
+            int[][] next = new int[2 * n + 1][2 * k + 1];
+            for (int j = 0; j < balls[i]; j++) {
+                int trans = 0;
+                trans = j == 0 ? -1 : trans;
+                trans = j == balls[i] ? 1 : trans;
+                for (int front = 0; front <= 2 * n; front++) {
+                    for (int color = 0; color <= 2 * n; color++) {
+                        if (dp[front][color] == 0) continue;
+                        double ways = dp[front][color];
+                        ways *= fact[front + j] / (fact[front] * fact[j]);
+                        ways *= fact[num - front + balls[i] - j] / (fact[num - front] * fact[balls[i] - j]);
+                        next[front + j][color + trans] += ways;
+                    }
+                }
+            }
+            dp = next;
+            num += balls[i];
+        }
+        return dp[n][k] / total;
+    }
+
+    public int findJudge(int n, int[][] trust) {
+        int[] dp1 = new int[n + 1];
+        int[] dp2 = new int[n + 1];
+        for (int[] ints : trust) {
+            dp1[ints[0]]++;
+            dp2[ints[1]]++;
+        }
+        for (int i = 1; i < dp2.length; i++) {
+            if (dp2[i] == n - 1 && dp1[i] == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public int sumNums(int n) {
+        if (n == 0) {
+            return 0;
+        }
+        return n + sumNums(n - 1);
+    }
+
+    public int minDeletionSize(String[] a) {
+        int count = 0;
+        char[][] chars = new char[a.length][];
+        for (int i = 0; i < a.length; i++) {
+            chars[i] = a[i].toCharArray();
+        }
+        for (int i = 0; i < chars[0].length; i++) {
+            for (int j = 1; j < chars.length; j++) {
+                if (chars[j][i] <= chars[j - 1][i]) {
+                    count++;
+                    break;
+                }
+            }
+        }
+        return count;
+    }
+
+    public int findLUSlength(String a, String b) {
+        if (a.equals(b))
+            return -1;
+        return Math.max(a.length(), b.length());
+    }
+
+    public int[][] transpose(int[][] A) {
+        int R = A.length, C = A[0].length;
+        int[][] ans = new int[C][R];
+        for (int r = 0; r < R; ++r)
+            for (int c = 0; c < C; ++c) {
+                ans[c][r] = A[r][c];
+            }
+        return ans;
+    }
+
+    public int countPrimeSetBits(int L, int R) {
+        int count = 0;
+        for (int i = L; i <= R; i++) {
+            int num = Integer.bitCount(i);
+            if (num == 2 || num == 3 ||
+                    num == 5 || num == 7 ||
+                    num == 11 || num == 13 ||
+                    num == 17 || num == 19) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public String removeDuplicates(String s) {
+        StringBuilder sb = new StringBuilder();
+        int sbLength = 0;
+        for (char character : s.toCharArray()) {
+            if (sbLength != 0 && character == sb.charAt(sbLength - 1))
+                sb.deleteCharAt(sbLength-- - 1);
+            else {
+                sb.append(character);
+                sbLength++;
+            }
+        }
+        return sb.toString();
+    }
+
+    public int calPoints(String[] ops) {
+        Stack<Integer> stack = new Stack();
+
+        for (String op : ops) {
+            if (op.equals("+")) {
+                int top = stack.pop();
+                int newtop = top + stack.peek();
+                stack.push(top);
+                stack.push(newtop);
+            } else if (op.equals("C")) {
+                stack.pop();
+            } else if (op.equals("D")) {
+                stack.push(2 * stack.peek());
+            } else {
+                stack.push(Integer.valueOf(op));
+            }
+        }
+
+        int ans = 0;
+        for (int score : stack) ans += score;
+        return ans;
+    }
+
+    public boolean CheckPermutation(String s1, String s2) {
+        if (s1.length() != s2.length()) {
+            return false;
+        }
+        char[] chars1 = s1.toCharArray();
+        char[] chars2 = s2.toCharArray();
+        Arrays.sort(chars1);
+        Arrays.sort(chars2);
+        for (int i = 0; i < chars1.length; i++) {
+            if (chars1[i] != chars2[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public int[] sortByBits(int[] arr) {
+        return Arrays.stream(arr)
+                .boxed()
+                .sorted(Comparator.comparing(Integer::bitCount)
+                        .thenComparing(Comparator.naturalOrder()))
+                .mapToInt(Integer::intValue)
+                .toArray();
+    }
+
+    public List<List<Integer>> minimumAbsDifference(int[] arr) {
+        Arrays.sort(arr);
+        Map<Integer, List<List<Integer>>> map = new HashMap<>();
+        int min = Integer.MAX_VALUE;
+        for (int i = 1; i < arr.length; i++) {
+            min = Math.min(arr[i] - arr[i - 1], min);
+            List<List<Integer>> list = map.getOrDefault(arr[i] - arr[i - 1], new ArrayList<>());
+            List<Integer> a = new ArrayList<>();
+            a.add(arr[i - 1]);
+            a.add(arr[i]);
+            list.add(a);
+            map.put(arr[i] - arr[i - 1], list);
+        }
+        return map.get(min);
+    }
+
+    public int[] relativeSortArray(int[] arr1, int[] arr2) {
+        Map<Integer, Integer> map = new HashMap<>();
+        for (int i = 0; i < arr2.length; i++) {
+            map.put(arr2[i], i);
+        }
+        return Arrays.stream(arr1)
+                .boxed()
+                .sorted(Comparator.<Integer, Integer>comparing(i -> map.getOrDefault(i, arr2.length)).thenComparing(Comparator.naturalOrder()))
+                .mapToInt(Integer::intValue)
+                .toArray();
+    }
+
+    public int projectionArea(int[][] grid) {
+        int m = grid.length;
+        int n = grid[0].length;
+        int ans = 0;
+        for (int i = 0; i < m; i++) {
+            int bestRow = 0, bestCol = 0;
+            for (int j = 0; j < n; j++) {
+                if (grid[i][j] > 0) ans++;  // top shadow
+                bestRow = Math.max(bestRow, grid[i][j]);
+                bestCol = Math.max(bestCol, grid[j][i]);
+            }
+            ans += bestRow;
+            ans += bestCol;
+        }
+        return ans;
+    }
+
+    public int[] constructArr(int[] a) {
+        int[] b = new int[a.length];
+        b[0] = 1;
+        for (int i = 1; i < a.length; i++) {
+            b[i] = b[i - 1] * a[i - 1];
+        }
+        int c = 1;
+        for (int i = a.length - 1; i >= 0; i--) {
+            b[i] = b[i] * c;
+            c *= a[i];
+        }
+        return b;
+    }
+
+    public boolean isToeplitzMatrix(int[][] matrix) {
+        int m = matrix.length;
+        int n = matrix[0].length;
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < n; j++) {
+                if (i > 0 && j > 0 && matrix[i - 1][j - 1] != matrix[i][j])
+                    return false;
+            }
+        }
+        return true;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new StringTool().subarraysDivByK(new int[]{4,5,0,-2,-3,1},5));
-        System.out.println(new StringTool().repeatedSubstringPattern("aabaaba"));
-        System.out.println(new StringTool().hasAlternatingBits(7));
-        System.out.println(new StringTool().dayOfTheWeek(31,8,2019));
     }
 }
