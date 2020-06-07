@@ -293,8 +293,69 @@ public class Week181 {
         return ret;
     }
 
+    public int[] shuffle(int[] nums, int n) {
+        int[] result = new int[2 * n];
+        for (int i = 0, j = 0; i < n; i++, j += 2) {
+            result[j] = nums[i];
+            result[j + 1] = nums[n + i];
+        }
+        return result;
+    }
+
+    public int[] getStrongest(int[] arr, int k) {
+        List<Integer> list = new ArrayList<>();
+        Arrays.sort(arr);
+        //中位数
+        int m = arr[(arr.length - 1) / 2];
+        int i = 0, j = arr.length - 1;
+        while (list.size() < k) {
+            if (Math.abs(arr[i] - m) > Math.abs(arr[j] - m)) {
+                list.add(arr[i]);
+                i++;
+            } else {
+                list.add(arr[j]);
+                j--;
+            }
+        }
+        return list.stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    public int minCost(int[] houses, int[][] cost, int m, int n, int target) {
+        int ans = 100000;
+        //i:房子数 ，j：街区数， k：装修成什么
+        int[][][] dp = new int[m + 1][m + 1][n + 1];
+        for (int i = 0; i < m+1; i++) {
+            for (int j = 0; j < m+1; j++) {
+                Arrays.fill(dp[i][j], 100000);
+            }
+        }
+        dp[0][0][0] = 0;
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j <= i; j++) {
+                for (int k = 0; k <= n; k++) {
+                    //说明不需要装修
+                    if (houses[i] > 0) {
+                        //j + (k != houses[i] ? 1 : 0): 装修成K是不是会多一个街区
+                        // 因为不需要装修，所以没有花费，取最小值就好
+                        dp[i + 1][j + (k != houses[i] ? 1 : 0)][houses[i]]
+                                = Math.min(dp[i + 1][j + (k != houses[i] ? 1 : 0)][houses[i]], dp[i][j][k]);
+                    } else {
+                        //装修
+                        for (int l = 1; l <= n; l++) {
+                            dp[i + 1][j + (k != l ? 1 : 0)][l] = Math.min(dp[i + 1][j + (k != l ? 1 : 0)][l], dp[i][j][k] + cost[i][l - 1]);
+                        }
+                    }
+                }
+            }
+        }
+        //取街全部装修完的最小费用
+        for (int l = 1; l <= n; l++) {
+            ans = Math.min(ans, dp[m][target][l]);
+        }
+        return ans == 100000 ? -1 : ans;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Week181().maxDotProduct(new int[]{2, 1, -2, 5}, new int[]{3, 0, -6}));
-        System.out.println(new Week181().maxDotProduct(new int[]{1, 1}, new int[]{-1, -1}));
+        System.out.println(new Week181().minCost(new int[]{0, 0, 0, 0, 0}, new int[][]{{1, 10}, {10, 1}, {10, 1}, {1, 10}, {5, 1}}, 5, 2, 3));
     }
 }
