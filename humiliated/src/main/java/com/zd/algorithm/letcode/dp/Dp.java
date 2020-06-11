@@ -1637,7 +1637,7 @@ public class Dp {
     }
 
     public int tribonacci(int n) {
-        int[] dp = new int[Math.max(n+1, 3)];
+        int[] dp = new int[Math.max(n + 1, 3)];
         dp[0] = 0;
         dp[1] = 1;
         dp[2] = 1;
@@ -1660,9 +1660,62 @@ public class Dp {
         return res;
     }
 
+    public boolean equationsPossible(String[] equations) {
+        // 并查集
+        Map<Character, Character> father = new HashMap<>();
+        // 先将字符串方程从相等到不等排序
+        Arrays.sort(equations, (s1, s2) -> {
+            if (s1.charAt(1) == s2.charAt(1)) return 0;
+            return s1.charAt(1) == '=' ? -1 : 1;
+        });
+
+        for (String s : equations) {
+            char[] chars = s.toCharArray();
+            char first = chars[0];
+            char second = chars[3];
+            // 获取根代表
+            while (father.containsKey(first)) first = father.get(first);
+            while (father.containsKey(second)) second = father.get(second);
+            // 如果是不等，但根代表相同，说明出错
+            if (chars[1] == '!') {
+                if (first == second) return false;
+                // 如果是相等，跳过根代表相同的情况，把一个根代表连接到另一个根代表上（合并集合）
+            } else {
+                if (first == second) continue;
+                father.put(first, second);
+            }
+        }
+        return true;
+    }
+
+    public int largestSumAfterKNegations(int[] A, int K) {
+        for (int i = 0; i < K; i++) {
+            Arrays.sort(A);
+            A[0] = -A[0];
+        }
+        return Arrays.stream(A).sum();
+    }
+
+    public boolean checkStraightLine(int[][] coordinates) {
+        int x1 = coordinates[1][0] - coordinates[0][0];
+        int y1 = coordinates[1][1] - coordinates[0][1];
+        for (int i = 2; i < coordinates.length; i++) {
+            int x2 = coordinates[i][0] - coordinates[0][0];
+            int y2 = coordinates[i][1] - coordinates[0][1];
+            if (x1 * y2 != x2 * y1) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public int convertInteger(int A, int B) {
+        return Integer.bitCount(A ^ B);
+    }
+
+
     public static void main(String[] args) {
-        System.out.println(new Dp().new21Game(2, 2, 3));
-        System.out.println(new Dp().new21Game(6, 1, 10));
-        System.out.println(new Dp().new21Game(21, 17, 10));
+        System.out.println(new Dp().equationsPossible(
+                new String[]{"a==b", "b!=c", "c==a"}));
     }
 }
