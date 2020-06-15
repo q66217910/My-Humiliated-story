@@ -1713,9 +1713,28 @@ public class Dp {
         return Integer.bitCount(A ^ B);
     }
 
+    public int numEquivDominoPairs(int[][] dominoes) {
+        int ans = 0;
+        int[] cp = new int[100];
+        for (int[] arr : dominoes) {
+            Arrays.sort(arr);
+            ans += cp[arr[0] * 10 + arr[1]]++;
+        }
+        return ans;
+    }
+
+    public void duplicateZeros(int[] arr) {
+        for (int i = 0; i < arr.length; i++) {
+            if (arr[i] == 0) {
+                System.arraycopy(arr, i, arr, i + 1, arr.length - i - 1);
+                i++;
+            }
+        }
+    }
 
     public static void main(String[] args) {
-        System.out.println(new Dp().equationsPossible(
-                new String[]{"a==b", "b!=c", "c==a"}));
+        new Dp().duplicateZeros(
+                new int[]{1, 0, 2, 3, 0, 4, 5, 0});
+        System.out.println();
     }
 }

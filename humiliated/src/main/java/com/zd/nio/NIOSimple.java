@@ -1,5 +1,6 @@
 package com.zd.nio;
 
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -8,8 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class NIOSimple {
 
     public static void main(String[] args) {
-        System.out.println(0x7fffffff);
-        System.out.println(Integer.MAX_VALUE);
+        System.out.println(UUID.randomUUID().toString());
     }
 
 }
