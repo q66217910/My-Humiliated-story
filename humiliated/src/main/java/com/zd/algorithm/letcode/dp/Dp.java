@@ -1732,9 +1732,18 @@ public class Dp {
         }
     }
 
+    public int maxScoreSightseeingPair(int[] A) {
+        int ans = 0, mx = A[0];
+        for (int j = 1; j < A.length; ++j) {
+            ans = Math.max(ans, mx + A[j] - j);
+            // 边遍历边维护
+            mx = Math.max(mx, A[j] + j);
+        }
+        return ans;
+    }
+
     public static void main(String[] args) {
-        new Dp().duplicateZeros(
-                new int[]{1, 0, 2, 3, 0, 4, 5, 0});
-        System.out.println();
+        System.out.println(new Dp().maxScoreSightseeingPair(
+                new int[]{8, 1, 5, 2, 6}));
     }
 }
