@@ -5,6 +5,7 @@ import com.google.common.collect.Lists;
 import java.lang.reflect.Array;
 import java.math.BigInteger;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class Week181 {
@@ -324,8 +325,8 @@ public class Week181 {
         int ans = 100000;
         //i:房子数 ，j：街区数， k：装修成什么
         int[][][] dp = new int[m + 1][m + 1][n + 1];
-        for (int i = 0; i < m+1; i++) {
-            for (int j = 0; j < m+1; j++) {
+        for (int i = 0; i < m + 1; i++) {
+            for (int j = 0; j < m + 1; j++) {
                 Arrays.fill(dp[i][j], 100000);
             }
         }
@@ -355,7 +356,153 @@ public class Week181 {
         return ans == 100000 ? -1 : ans;
     }
 
+    public int[] finalPrices(int[] prices) {
+        int n = prices.length;
+        int[] res = new int[n];
+        for (int i = 0; i < n; i++) {
+            boolean ret = true;
+            for (int j = i + 1; j < n; j++) {
+                if (prices[j] <= prices[i]) {
+                    res[i] = prices[i] - prices[j];
+                    ret = false;
+                    break;
+                }
+            }
+            if (ret) {
+                res[i] = prices[i];
+            }
+        }
+        return res;
+    }
+
+    public int minSumOfLengths(int[] arr, int target) {
+        //总数对应的索引
+        Map<Integer, Integer> map = new HashMap<>();
+        map.put(0, 0);
+        //数字的总和
+        int sum = 0;
+        int n = arr.length, ans = 0x3f3f3f3f;
+        //dp:表示当前最小值
+        int[] dp = new int[100005];
+        Arrays.fill(dp, 0x3f);
+        for (int i = 1; i <= n; i++) {
+            sum += arr[i - 1];
+            //剩余数
+            int gp = sum - target;
+            //若当前值没有默认前一个值
+            dp[i] = dp[i - 1];
+            //若存在数gp则表示从  pos -> i 是一个子数组
+            if (map.containsKey(gp)) {
+                int pos = map.get(gp);
+                //设置dp的值
+                dp[i] = Math.min(dp[i], i - pos);
+                //ans为当前加上到pos的最小值
+                ans = Math.min(ans, i - pos + dp[pos]);
+            }
+            map.put(sum, i);
+        }
+        return ans >= 0x3f ? -1 : ans;
+    }
+
+    public int minDistance(int[] houses, int k) {
+        Arrays.sort(houses);
+        int n = houses.length;
+        //总距离
+        int[] s = new int[n + 1];
+        for (int i = 0; i < n; i++) s[i + 1] = s[i] + houses[i];
+        //第i房子和j房子只有一个邮箱的差距
+        int[][] w = new int[n + 1][n + 1];
+        for (int i = 1; i <= n; i++) {
+            for (int j = i; j <= n; j++) {
+                w[i][j] = s[j] - s[i + j - 1 >> 1] - s[i + j >> 1] + s[i - 1];
+            }
+        }
+        //表示i栋房子在k个邮箱的最小值
+        int[][] dp = new int[n + 1][k + 1];
+        for (int[] ints : dp) {
+            Arrays.fill(ints, 10000);
+        }
+        dp[0][0] = 0;
+        for (int i = 1; i <= n; i++) {
+            for (int j = 1; j <= i && j <= k; j++) {
+                for (int l = 0; l < i; l++) {
+                    //表示 从l个j-1个的最小值+ 多一个邮箱(l+1到i只有1个邮箱)
+                    dp[i][j] = Math.min(dp[i][j], dp[l][j - 1] + w[l + 1][i]);
+                }
+            }
+        }
+        return dp[n][k];
+    }
+
+    public int[] runningSum(int[] nums) {
+        int[] res = new int[nums.length];
+        int sum = 0;
+        for (int i = 0; i < nums.length; i++) {
+            sum += nums[i];
+            res[i] = sum;
+        }
+        return res;
+    }
+
+    public int findLeastNumOfUniqueInts(int[] arr, int k) {
+        Map<Integer, Long> map = Arrays.stream(arr).boxed().collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+        int result = map.size();
+        List<Long> list = map.values().stream().sorted().collect(Collectors.toList());
+        for (Long value : list) {
+            if (k >= value) {
+                result--;
+                k -= value;
+            }
+        }
+        return result;
+    }
+
+    public int minDays(int[] bloomDay, int m, int k) {
+        if (m*k > bloomDay.length) {
+            return -1;
+        }
+        // 最大等待的天数是数组里的最大值
+        int max=0;
+        for (int i : bloomDay) {
+            max = Math.max(max, i);
+        }
+        // 最小等待0天
+        int min=0;
+        while (min < max) {
+            // mid:等待天数
+            int mid = min + (max-min)/2;
+            // 等待mid天，有多少组连续的k朵花已经开花🌼了
+            int count = getCount(bloomDay, mid, k);
+            if (count >= m) {
+                max = mid;
+            } else {
+                min = mid+1;
+            }
+        }
+        return min;
+    }
+    // 返回等待day天，有多少组连续的k天<=day  这里用的贪心
+    private int getCount(int[] arr, int day, int k) {
+        int re=0;
+        int count=0;
+        for (int i=0; i<arr.length; i++) {
+            if (arr[i] <= day) {
+                count++;
+            } else {
+                count = 0;
+            }
+            //  连续的k朵花🌼开了
+            if (count == k) {
+                re++;
+                count=0;
+            }
+        }
+        return re;
+    }
+    
+
     public static void main(String[] args) {
-        System.out.println(new Week181().minCost(new int[]{0, 0, 0, 0, 0}, new int[][]{{1, 10}, {10, 1}, {10, 1}, {1, 10}, {5, 1}}, 5, 2, 3));
+        System.out.println(new Week181().minDays(new int[]{1, 10, 3, 10, 2}, 3, 1));
+        System.out.println(new Week181().minDays(new int[]{1, 10, 2, 9, 3, 8, 4, 7, 5, 6}, 4, 2));
     }
 }

@@ -1742,8 +1742,54 @@ public class Dp {
         return ans;
     }
 
+    public int findUnsortedSubarray(int[] nums) {
+        int length = nums.length;
+        int left = 0, right = -1;
+        int max = nums[0], min = nums[length - 1];
+        for (int i = 0; i < length; i++) {
+            if (nums[i] < max) right = i;
+            else max = nums[i];
+            if (nums[length - i - 1] > min) left = length - i - 1;
+            else min = nums[length - i - 1];
+        }
+        return right - left + 1;
+    }
+
+    public double findMaxAverage(int[] nums, int k) {
+        double sum = 0;
+        for (int i = 0; i < k; i++)
+            sum += nums[i];
+        double res = sum;
+        for (int i = k; i < nums.length; i++) {
+            sum += nums[i] - nums[i - k];
+            res = Math.max(res, sum);
+        }
+        return res / k;
+    }
+
+    public int translateNum(int num) {
+        return translateNum(String.valueOf(num), 0);
+    }
+
+    public int translateNum(String num, int index) {
+        int result = 0;
+        if (index >= num.length() - 1) {
+            return 1;
+        }
+        result += translateNum(num, index + 1);
+        if (index < num.length() - 1 && ((num.charAt(index) == '2' && num.charAt(index + 1) >= '0' && num.charAt(index + 1) <= '5')
+                || num.charAt(index) == '1')) {
+            result += translateNum(num, index + 2);
+        }
+        return result;
+    }
+
     public static void main(String[] args) {
         System.out.println(new Dp().maxScoreSightseeingPair(
                 new int[]{8, 1, 5, 2, 6}));
+        System.out.println(new Dp().translateNum(11));
+        new Dp().duplicateZeros(
+                new int[]{1, 0, 2, 3, 0, 4, 5, 0});
+        System.out.println();
     }
 }
