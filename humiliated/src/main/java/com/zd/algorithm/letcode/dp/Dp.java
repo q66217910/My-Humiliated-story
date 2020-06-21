@@ -1,5 +1,6 @@
 package com.zd.algorithm.letcode.dp;
 
+import com.google.common.base.Strings;
 import org.checkerframework.checker.units.qual.A;
 import sun.misc.Unsafe;
 
@@ -1784,12 +1785,142 @@ public class Dp {
         return result;
     }
 
+    public int xorOperation(int n, int start) {
+        int res = start;
+        for (int i = 1; i < n; i++) {
+            int num = 2 * i + start;
+            res = res ^ num;
+        }
+        return res;
+    }
+
+    public String[] getFolderNames(String[] names) {
+        Map<String, Integer> map = new HashMap<>();
+        for (int i = 0; i < names.length; i++) {
+            String name = names[i];
+            if (!map.containsKey(name)) {
+                map.put(name, 1);
+                names[i] = name;
+            } else {
+                //被占用
+                int num = map.get(name);
+                String temp = name + "(" + num + ")";
+                //加到没有被占用的层数
+                while (map.containsKey(temp)) {
+                    num++;
+                    temp = name + "(" + num + ")";
+                }
+                names[i] = temp;
+                map.put(name, num + 1);
+                map.put(temp, 1);
+            }
+
+        }
+        return names;
+    }
+
+    public int[] avoidFlood(int[] rains) {
+        int[] full = new int[rains.length];
+        Map<Integer, Integer> map = new HashMap<>();
+        //可以抽的数量
+        List<Integer> index = new ArrayList<>();
+        Arrays.fill(full, -1);
+        for (int i = 0; i < rains.length; i++) {
+            if (rains[i] == 0) {
+                //不下雨可以抽干一个湖
+                index.add(i);
+            } else {
+                //是否满了
+                Integer num = map.getOrDefault(rains[i], 0);
+                if (map.containsKey(rains[i])) {
+                    //需要抽
+                    if (index.size() > 0) {
+                        //抽干之前湖
+                        Iterator<Integer> iterator = index.iterator();
+                        boolean ret = true;
+                        while (iterator.hasNext()) {
+                            Integer indexNum = iterator.next();
+                            if (indexNum > num && indexNum < i) {
+                                full[indexNum] = rains[i];
+                                iterator.remove();
+                                ret = false;
+                                break;
+                            }
+                        }
+                        if (ret) {
+                            return new int[]{};
+                        }
+                    } else {
+                        //洪水
+                        return new int[]{};
+                    }
+                }
+                map.put(rains[i], i);
+            }
+        }
+        index.forEach(i -> {
+            full[i] = 1;
+        });
+        return full;
+    }
+
+    public boolean patternMatching(String pattern, String value) {
+        boolean ret = value == null || "".equals(value);
+        //若匹配规则为空
+        if (pattern == null || "".equals(pattern)) return ret;
+        //匹配规则不为空,匹配值为空，则匹配规则为全a或者全b
+        if (ret) {
+            int i = 0;
+            while (i < pattern.length() && pattern.charAt(i) == pattern.charAt(0)) i++;
+            return i == pattern.length();
+        }
+        int[] dp = new int[2];
+        int n = pattern.length(), m = value.length();
+        //记录a和b的数量
+        for (char x : pattern.toCharArray()) dp[x - 'a']++;
+        //a的数量为0,那全部为b,判断没隔m/n个是否都一样
+        if (dp[0] == 0) return helper(value, dp[1]);
+        //b的数量为0，全部为a
+        if (dp[1] == 0) return helper(value, dp[0]);
+
+        if (helper(value, dp[0])) return true;
+        if (helper(value, dp[1])) return true;
+
+
+        for (int lenA = 1; lenA * dp[0] <= m - dp[1]; lenA++) {
+            if ((m - lenA * dp[0]) % dp[1] != 0) continue;
+            int lenB = (m - lenA * dp[0]) / dp[1];
+            if (check(pattern, value, lenA, lenB)) return true;
+        }
+        return false;
+    }
+
+    private boolean helper(String value, int k) {
+        int m = value.length();
+        if (m % k != 0) return false;
+        int len = m / k;
+        for (int i = len; i < m; i += len)
+            if (!value.substring(i, i+len).equals(value.substring(0, len))) return false;
+        return true;
+    }
+
+    private boolean check(String pattern, String value, int lenA, int lenB) {
+        String[] ps = new String[]{"", ""}; // a, b匹配的字符串
+        for (int i = 0, j = 0; i < pattern.length(); i++) { // i, j指针都是恰当长度的
+            if (pattern.charAt(i) == 'a') {
+                if (ps[0].equals("")) ps[0] = value.substring(j, j+lenA);
+                else if (!value.substring(j, j+lenA).equals(ps[0])) return false;
+                j += lenA;
+            } else if (pattern.charAt(i) == 'b') {
+                if (ps[1].equals("")) ps[1] = value.substring(j, j+lenB);
+                else if (!value.substring(j, j+lenB).equals(ps[1])) return false;
+                j += lenB;
+            }
+        }
+        return true;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().maxScoreSightseeingPair(
-                new int[]{8, 1, 5, 2, 6}));
-        System.out.println(new Dp().translateNum(11));
-        new Dp().duplicateZeros(
-                new int[]{1, 0, 2, 3, 0, 4, 5, 0});
-        System.out.println();
+        System.out.println(new Dp().patternMatching("bbb","xxxxxx"));
     }
 }
