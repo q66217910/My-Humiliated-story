@@ -83,9 +83,9 @@ MYSQL
 
 ```
 	1.binlog(二进制日志)
-	2.错误日志
-	3.查询日志
-	4.慢查询日志
+	2.errorlog(错误日志)
+	3.general log(查询日志)
+	4.slow_query log(慢查询日志)
 	InnoDB日志：
 		1.redo log(重做日志)
 		2.undo log(回滚日志) 
@@ -146,6 +146,44 @@ MYSQL
 ```
 
 ```
+
+##### 2-4. errorlog(错误日志)
+
+```
+ 1.MYSQL执行过程中的错误信息
+ 2.MYSQL执行过程中的警告信息
+ 3.MYSQL启动和停止过程产生的信息
+ 4.event scheduler运行时所产生信息
+ 
+ 相关属性：
+ 	log_error: 错误日志的存放路径
+ 	log_warnings：0：不记录警告信息， 1：记录警告信息
+```
+
+##### 2-5.  general log(查询日志)
+
+```
+	记录查询的日志,语句的正确与否都会被记录，由于查询日志很多，默认不开启。
+	
+	相关属性：
+		general_log ： OFF 不开启
+		general_log_file ： 查询日志路径
+		log_output   ： 文件输出格式
+```
+
+##### 2-6. slow_query log(慢查询日志)
+
+```
+	记录响应比较慢的查询语句
+	
+	相关属性：
+		slow_query_log: 是否开启慢查询 ON OFF
+		slow_query_log_file: 慢查询日志的路径
+		long_query_time:  慢查询时间 10s
+		log_queries_not_using_indexes： 查询里未使用索引是否记录 ON OFF
+```
+
+
 
 ### 3. MYSQL的锁
 
