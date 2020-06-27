@@ -129,15 +129,17 @@ MYSQL
 		2: 事务提交不会写入buffer而是直接写入OS buffer，然后每秒调用fsync将日志写入到file。
 ```
 
-###### 2-2-2：（日志块）
+###### 2-2-2：（日志块log block）
 
 ```
-	redo log是以为块为单位的，每个块512字节。在buffer/
+	redo log是以为块为单位的，每个块512字节。在buffer/os buffe/file中都是512的字节日志块存储。
+	日志块是由 
+		日志头： 12个字节 
+			log_block_hdr_no:	日志块在buffer中的位置id (4字节)
+			log_block_hdr_data_len: log的大小  (2字节)
+			log_block_first_rec_group： 日志块中第一个log的开始偏移位置 (2字节)
+			lock_block_checkpoint_no: 写入检查点信息的位置 (4字节)
 ```
-
-
-
-
 
 ##### 2-3. binlog(二进制日志)
 
@@ -182,8 +184,6 @@ MYSQL
 		long_query_time:  慢查询时间 10s
 		log_queries_not_using_indexes： 查询里未使用索引是否记录 ON OFF
 ```
-
-
 
 ### 3. MYSQL的锁
 

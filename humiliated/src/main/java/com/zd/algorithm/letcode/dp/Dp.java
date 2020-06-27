@@ -1900,7 +1900,7 @@ public class Dp {
         if (m % k != 0) return false;
         int len = m / k;
         for (int i = len; i < m; i += len)
-            if (!value.substring(i, i+len).equals(value.substring(0, len))) return false;
+            if (!value.substring(i, i + len).equals(value.substring(0, len))) return false;
         return true;
     }
 
@@ -1908,19 +1908,33 @@ public class Dp {
         String[] ps = new String[]{"", ""}; // a, b匹配的字符串
         for (int i = 0, j = 0; i < pattern.length(); i++) { // i, j指针都是恰当长度的
             if (pattern.charAt(i) == 'a') {
-                if (ps[0].equals("")) ps[0] = value.substring(j, j+lenA);
-                else if (!value.substring(j, j+lenA).equals(ps[0])) return false;
+                if (ps[0].equals("")) ps[0] = value.substring(j, j + lenA);
+                else if (!value.substring(j, j + lenA).equals(ps[0])) return false;
                 j += lenA;
             } else if (pattern.charAt(i) == 'b') {
-                if (ps[1].equals("")) ps[1] = value.substring(j, j+lenB);
-                else if (!value.substring(j, j+lenB).equals(ps[1])) return false;
+                if (ps[1].equals("")) ps[1] = value.substring(j, j + lenB);
+                else if (!value.substring(j, j + lenB).equals(ps[1])) return false;
                 j += lenB;
             }
         }
         return true;
     }
 
+    public int firstMissingPositive(int[] nums) {
+        Map<Integer, Long> map = Arrays.stream(nums)
+                .boxed()
+                .collect(Collectors.groupingBy(Function.identity(),
+                        Collectors.counting()));
+        for (int i = 1; i < nums.length + 1; i++) {
+            Long value = map.getOrDefault(i, 0L);
+            if (value == 0) {
+                return i;
+            }
+        }
+        return nums.length + 1;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().patternMatching("bbb","xxxxxx"));
+        System.out.println(new Dp().patternMatching("bbb", "xxxxxx"));
     }
 }

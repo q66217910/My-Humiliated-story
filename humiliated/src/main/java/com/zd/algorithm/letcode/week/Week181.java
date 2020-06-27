@@ -458,34 +458,35 @@ public class Week181 {
     }
 
     public int minDays(int[] bloomDay, int m, int k) {
-        if (m*k > bloomDay.length) {
+        if (m * k > bloomDay.length) {
             return -1;
         }
         // 最大等待的天数是数组里的最大值
-        int max=0;
+        int max = 0;
         for (int i : bloomDay) {
             max = Math.max(max, i);
         }
         // 最小等待0天
-        int min=0;
+        int min = 0;
         while (min < max) {
             // mid:等待天数
-            int mid = min + (max-min)/2;
+            int mid = min + (max - min) / 2;
             // 等待mid天，有多少组连续的k朵花已经开花🌼了
             int count = getCount(bloomDay, mid, k);
             if (count >= m) {
                 max = mid;
             } else {
-                min = mid+1;
+                min = mid + 1;
             }
         }
         return min;
     }
+
     // 返回等待day天，有多少组连续的k天<=day  这里用的贪心
     private int getCount(int[] arr, int day, int k) {
-        int re=0;
-        int count=0;
-        for (int i=0; i<arr.length; i++) {
+        int re = 0;
+        int count = 0;
+        for (int i = 0; i < arr.length; i++) {
             if (arr[i] <= day) {
                 count++;
             } else {
@@ -494,15 +495,91 @@ public class Week181 {
             //  连续的k朵花🌼开了
             if (count == k) {
                 re++;
-                count=0;
+                count = 0;
             }
         }
         return re;
     }
-    
+
+    public double average(int[] salary) {
+        Arrays.sort(salary);
+        double sum = 0;
+        for (int i = 1; i < salary.length - 1; i++) {
+            sum += salary[i];
+        }
+        return sum / (salary.length - 2);
+    }
+
+    public int kthFactor(int n, int k) {
+        int count = 0;
+        for (int i = 1; i <= n; i++) {
+            if (n % i == 0) {
+                count++;
+            }
+            if (count == k) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public int longestSubarray(int[] nums) {
+        //从左到右
+        int[] dp1 = new int[nums.length];
+        //从右到左
+        int[] dp2 = new int[nums.length];
+        dp1[0] = nums[0] == 1 ? 1 : 0;
+        dp2[nums.length - 1] = nums[nums.length - 1] == 1 ? 1 : 0;
+        for (int i = 1; i < nums.length; i++) {
+            dp1[i] = nums[i] == 1 ? dp1[i - 1] + 1 : 0;
+            dp2[nums.length - i - 1] = nums[nums.length - i - 1] == 1 ? dp2[nums.length - i] + 1 : 0;
+        }
+
+        int max = 0;
+        for (int i = 0; i < nums.length; i++) {
+            max = Math.max(max, (i - 1 >= 0 ? dp1[i - 1] : 0) + (i + 1 < nums.length ? dp2[i + 1] : 0));
+        }
+        return max;
+    }
+
+    public int minNumberOfSemesters(int n, int[][] dependencies, int k) {
+        //入度
+        ArrayList<Integer>[] graph = new ArrayList[n];
+        for (int i = 0; i < n; i++) {
+            graph[i] = new ArrayList<>();
+        }
+        int[] in = new int[n + 1];
+        for (int[] dependency : dependencies) {
+            graph[dependency[0] - 1].add(dependency[1] - 1);
+            in[dependency[1] - 1]++;
+        }
+
+        PriorityQueue<Integer> queue = new PriorityQueue<>((a, b) -> in[b] - in[a]);
+        for (int i = 0; i < n; i++) {
+            if (in[i] == 0) {
+                queue.add(i);
+            }
+        }
+
+        int num = 0;
+        while (!queue.isEmpty()) {
+            ArrayList<Integer> next = new ArrayList<>();
+            for (int i = 0; !queue.isEmpty() && i < k; i++) {
+                int j = queue.remove();
+                for (int l : graph[j]) {
+                    in[l]--;
+                    if (in[l] == 0) {
+                        next.add(l);
+                    }
+                }
+            }
+            queue.addAll(next);
+            num++;
+        }
+        return num;
+    }
 
     public static void main(String[] args) {
-        System.out.println(new Week181().minDays(new int[]{1, 10, 3, 10, 2}, 3, 1));
-        System.out.println(new Week181().minDays(new int[]{1, 10, 2, 9, 3, 8, 4, 7, 5, 6}, 4, 2));
+        System.out.println(new Week181().minNumberOfSemesters(5, new int[][]{{2, 1}, {3, 1}, {4, 1}, {1, 5}}, 2));
     }
 }
