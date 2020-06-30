@@ -1934,6 +1934,29 @@ public class Dp {
         return nums.length + 1;
     }
 
+    public int findLength(int[] A, int[] B) {
+        int max = 0;
+        int n = A.length;
+        int m = B.length;
+        int[][] dp = new int[n][m];
+        dp[0][0] = 0;
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < m; j++) {
+                if (A[i] == B[j]) {
+                    if (i == 0 || j == 0) {
+                        dp[i][j] = 1;
+                    } else {
+                        dp[i][j] = dp[i - 1][j - 1] + 1;
+                    }
+                } else {
+                    dp[i][j] = 0;
+                }
+                max = Math.max(max, dp[i][j]);
+            }
+        }
+        return max;
+    }
+
     public static void main(String[] args) {
         System.out.println(new Dp().patternMatching("bbb", "xxxxxx"));
     }
