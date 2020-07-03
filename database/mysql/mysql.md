@@ -242,9 +242,46 @@ MYSQL
 	间隙锁：在范围查找中不仅为对存在的记录加锁，也会对不存在的记录(间隙)加锁。
 ```
 
+##### 3-4.多版本并发控制(MVCC)
+
+​		适用于读提交(RC)、可重复读(RR)
+
+```
+	原理:
+		通过保存某个时间点的快照,一个事务无论运行多久,在同一个事务中看到的数据都是
+		一致的。事务的开启时刻不同，事务看到表里的数据也可能会不同。
+     
+     版本链:
+     	聚簇索引中包含两个隐藏列
+     		trx_id: 数据修改时,记录事务版本号
+     		roll_pointer: 数据修改时,存储一个指针,指针指向记录修改前的信息
+     		
+     ReadView(快照):
+     	m_ids: 生成ReadView时当前系统活跃的事务id
+     	min_trx_id: 生成ReadView时系统活跃的最小事务id
+     	max_trx_id: 生成ReadView时系统分配给下一个事务的id
+     	creator_trx_id: 生成ReadView的事务id
+    
+    实现:
+		InnoDB中每一列都额外保存列（trx_id），开始事务时，系统版本号会递增，
+		系统版本号当做事务的版本号，用来查询每行记录的版本号。
+		
+		1.insert、update、detele操作: trx_id设置为cur_trx_id
+        2.query操作(查询ReadView):  
+      			1).trx_id == creator_trx_id (当前事务)
+      			2).trx_id <=min_trx_id  (记录在事务开启前生成)
+      			3).trx_id (min_trx_id,max_trx_id) 之间 && trx_id不在m_ids中
+    
+     RC和RR的区别：
+     	RC每次读数据都会生成一个ReadView。
+     	RR只有第一次读会生成ReadView。
+```
+
 
 
 ### 4. MYSQL索引
+
+
 
 mysql的组成
 ---
