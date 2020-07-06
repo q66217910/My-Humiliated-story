@@ -1957,7 +1957,75 @@ public class Dp {
         return max;
     }
 
+    public int kthSmallest(int[][] matrix, int k) {
+        int n = matrix.length;
+        int left = matrix[0][0], right = matrix[n - 1][n - 1];
+        while (left < right) {
+            int mid = left + ((right - left) >> 1);
+            if (kthSmallestCheck(matrix, mid, k, n)) {
+                right = mid;
+            } else {
+                left = mid + 1;
+            }
+        }
+        return left;
+    }
+
+    private boolean kthSmallestCheck(int[][] matrix, int mid, int k, int n) {
+        int i = n - 1;
+        int j = 0;
+        int num = 0;
+        while (i >= 0 && j < n) {
+            if (matrix[i][j] <= mid) {
+                num += i + 1;
+                j++;
+            } else {
+                i--;
+            }
+        }
+        return num >= k;
+    }
+
+    public boolean canMakeArithmeticProgression(int[] arr) {
+        Arrays.sort(arr);
+        int dp = arr[1] - arr[0];
+        for (int i = 2; i < arr.length; i++) {
+            if (arr[i] - arr[i - 1] != dp) return false;
+        }
+        return true;
+    }
+
+    public int getLastMoment(int n, int[] left, int[] right) {
+        int res = 0;
+        for (int l : left) {
+            res = Math.max(res, l);
+        }
+        for (int r : right) {
+            res = Math.max(res, n-r);
+        }
+        return res;
+    }
+
+    public int numSubmat(int[][] mat) {
+        int m = mat.length;
+        int n = mat[0].length;
+        int[][] dp = new int[n+7][n+7];
+        int res = 0;
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < n; j++) {
+                int flag = 1;
+                for (int r = j; r < n; ++r) {
+                    flag &= mat[i][r];
+                    if (flag>0) ++dp[j][r];
+                    else dp[j][r] = 0;
+                    res += dp[j][r];
+                }
+            }
+        }
+        return res;
+    }
+
     public static void main(String[] args) {
-        System.out.println(new Dp().patternMatching("bbb", "xxxxxx"));
+        System.out.println(new Dp().numSubmat(new int[][]{{1, 0, 1}, {1, 1, 0}, {1, 1, 0}}));
     }
 }
