@@ -252,6 +252,7 @@ MYSQL
 		一致的。事务的开启时刻不同，事务看到表里的数据也可能会不同。
      
      版本链:
+     	存在undo log中
      	聚簇索引中包含两个隐藏列
      		trx_id: 数据修改时,记录事务版本号
      		roll_pointer: 数据修改时,存储一个指针,指针指向记录修改前的信息
@@ -266,20 +267,48 @@ MYSQL
 		InnoDB中每一列都额外保存列（trx_id），开始事务时，系统版本号会递增，
 		系统版本号当做事务的版本号，用来查询每行记录的版本号。
 		
-		1.insert、update、detele操作: trx_id设置为cur_trx_id
-        2.query操作(查询ReadView):  
+		1.insert操作:插入一条记录,trx_id设置为cur_trx_id
+		2.update操作: undo log记录原记录信息,然后插入一条新记录,roll_pointer
+				指向原记录
+		3.detele操作: 在版本链最新的位置复制一份，trx_id设置为cur_trx_id，
+				头信息(record header)的(deleted flag)标记为true。
+        4.query操作(查询ReadView):  
       			1).trx_id == creator_trx_id (当前事务)
       			2).trx_id <=min_trx_id  (记录在事务开启前生成)
       			3).trx_id (min_trx_id,max_trx_id) 之间 && trx_id不在m_ids中
+      			
+      		查询时根据数据行trx_id在ReadView中判断数据对当前事务是否可见，若不可见，则根据
+      		roll_pointer在undo log中查找上一个版本，一直沿着版本链找到可见记录或者版本链结束。
+      		
     
      RC和RR的区别：
      	RC每次读数据都会生成一个ReadView。
      	RR只有第一次读会生成ReadView。
+     	
+     注：
+     	数据修改的过程：
+     		begin-> 用排他锁(写锁)锁定该行->记录redo log->记录undo log
+     		->修改当前行的值，写事务编号，回滚指针指向undo log中的修改前的行
 ```
 
 
 
 ### 4. MYSQL索引
+
+```
+	索引的作用:
+		1.减少了服务器扫描的数量
+		2.避免了排序和临时表
+		3.InnoDB中会使用行级锁,提交了并发访问量
+```
+
+
+
+##### 4-1. 哈希索引
+
+```
+		
+```
 
 
 
