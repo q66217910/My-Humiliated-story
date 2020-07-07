@@ -2001,7 +2001,7 @@ public class Dp {
             res = Math.max(res, l);
         }
         for (int r : right) {
-            res = Math.max(res, n-r);
+            res = Math.max(res, n - r);
         }
         return res;
     }
@@ -2009,20 +2009,31 @@ public class Dp {
     public int numSubmat(int[][] mat) {
         int m = mat.length;
         int n = mat[0].length;
-        int[][] dp = new int[n+7][n+7];
+        int[][] dp = new int[n + 7][n + 7];
         int res = 0;
         for (int i = 0; i < m; i++) {
             for (int j = 0; j < n; j++) {
                 int flag = 1;
                 for (int r = j; r < n; ++r) {
                     flag &= mat[i][r];
-                    if (flag>0) ++dp[j][r];
+                    if (flag > 0) ++dp[j][r];
                     else dp[j][r] = 0;
                     res += dp[j][r];
                 }
             }
         }
         return res;
+    }
+
+    public int[] divingBoard(int shorter, int longer, int k) {
+        Set<Integer> set = new HashSet<>();
+        if (k == 0) {
+            return new int[]{};
+        }
+        for (int i = 0; i <= k; i++) {
+            set.add(longer * i + shorter * (k - i));
+        }
+        return set.stream().mapToInt(Integer::intValue).sorted().toArray();
     }
 
     public static void main(String[] args) {
