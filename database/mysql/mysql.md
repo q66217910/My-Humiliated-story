@@ -302,8 +302,6 @@ MYSQL
 		3.InnoDB中会使用行级锁,提交了并发访问量
 ```
 
-
-
 ##### 4-1. InnoDB聚簇索引
 
 ```
@@ -321,7 +319,38 @@ MYSQL
 ##### 4-3. page结构
 
 ```
+	数据页(page)是 InnoDB最小的磁盘单位。存放表中行的实际数据，Page是一个双向链表。
 	
+	1.File Header(文件头):
+		FIL_PAGE_SPACE_OR_CHKSUM(4k): 该页的checksum值
+        FIL_PAGE_OFFSET(4k): 表空间中页的偏移值
+        FIL_PAGE_PREV(4k): 当前页的上一页
+        FIL_PAGE_NEXT(4k): 当前页的下一页
+        FIL_PAGE_LSN(8k): 最后被修改的日志序列位置
+        FIL_PAGE_TYPE(2k): 页的类型 (B+树叶子节点/索引节点/undo log)
+        FIL_PAGE_FILE_FLUSH_LSN: 
+        FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID: 页属于哪个表空间
+       
+    2.Page Header(页头): 记录数据页的状态
+    
+    3.Infimum/Supremum(边界记录):
+    	Infimum:比任何主键值要小
+    	Supremum:比任何主键要大
+    	
+   	4.User Records(16k):
+   		实际存储的行数据的内容。
+   	5.Page Directory(页目录):
+   		存放了记录的相对位置
+   	6.File Trailer:
+   		FIL_PAGE_END_LSN:File Heade的FIL_PAGE_SPACE_OR_CHKSUM和FIL_PAGE_LSN
+    	
+    页分裂:
+    	插入数据按照主键排序，当插入新数据，如果数据大小能放入页中，就按顺序将页填满。若当前
+    	页已经填满，则根据FIL_PAGE_NEXT插入下一页。
+    	若下一页也是满的,创建一个新页，然后当前要分裂的点开始移动到新页。页分裂会导致物理页的错位。
+    页合并:
+    	删除记录，不会物理删除,数据标记为flaged。当页中删除的量达到MERGE_THRESHOLD时，会寻找
+    	前后的页看是否能合并页
 ```
 
 ##### 4-4. B+树
@@ -339,7 +368,7 @@ public class BTree<K extends Comparable<K>, V> {
     private Node<K, V> root;
 
     /**
-     * 非叶子节点节点数量
+     * 节点数量
      */
     private static final int M = 4;
 
