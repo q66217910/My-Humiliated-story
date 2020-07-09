@@ -1,22 +1,39 @@
-#redis
+# REDIS
 
-1.redis为什么快
----
+## 1.Redis dict(字典)
 
-    1.采用了多路复用路由io
-    2.数据结构简单
-    3.运行在内存中
-    
-2.Redis为什么是单线程
----
+dict类似java中map，是键值对。Redis很多操作都基于dict。
 
-    官方解释：Redis的瓶颈不是cpu的运行速度，而往往是网络带宽和机器的内存大小。
-    
-3.Redis的常用使用场景
----
-    
-    1.排行榜
-    2.计算器/限速器
-    3.好友关系
-    4.消息队列
-    5.Session共享
+```c
+typedef struct dict {
+    dictType *type; //字典类型
+    void *privdata;
+    dictht ht[2];
+    long rehashidx; /* rehashing not in progress if rehashidx == -1 */
+    unsigned long iterators; /* number of iterators currently running */
+} dict;
+```
+
+
+
+## 2.Redis数据库
+
+```c
+struct redisServer {
+    redisDb *db;//redis 数据库
+    int dbnum; //数据库数量
+}
+
+typedef struct redisDb {
+    dict *dict;                 //redis的KEY映射
+    dict *expires;              //过期时间
+    dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
+    dict *ready_keys;           /* Blocked keys that received a PUSH */
+    dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
+    int id;                     //数据库id
+    long long avg_ttl;          /* Average TTL, just for stats */
+    unsigned long expires_cursor; /* Cursor of the active expire cycle. */
+    list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
+} redisDb;
+```
+
