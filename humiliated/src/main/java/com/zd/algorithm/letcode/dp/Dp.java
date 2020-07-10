@@ -2036,6 +2036,24 @@ public class Dp {
         return set.stream().mapToInt(Integer::intValue).sorted().toArray();
     }
 
+    public int maxProfit1(int[] prices) {
+        if (prices.length == 0) {
+            return 0;
+        }
+        int dp0 = -prices[0];
+        int dp1 = 0;
+        int dp2 = 0;
+        for (int i = 1; i < prices.length; i++) {
+            int dp3 = Math.max(dp0, dp2 - prices[i]);
+            int dp4 = dp0 + prices[i];
+            int dp5 = Math.max(dp1, dp2);
+            dp0 = dp3;
+            dp1 = dp4;
+            dp2 = dp5;
+        }
+        return Math.max(dp1, dp2);
+    }
+
     public static void main(String[] args) {
         System.out.println(new Dp().numSubmat(new int[][]{{1, 0, 1}, {1, 1, 0}, {1, 1, 0}}));
     }
