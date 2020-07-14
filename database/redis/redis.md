@@ -164,8 +164,12 @@ encoding  :  记录了节点content属性所保存数据的类型和长度
 
 ### ziplist的创建
 
+​		1.申请表头和表尾的内存（10B+1B）
+
+​		2.设置zlbytes/zltail/zllen/zlend的值
+
 ```c
-//ZIPLIST头存储长度 32位:(总字节数+到最后一个节点的偏移量)  16位:节点字段数量
+//ZIPLIST头存储长度 32位:总字节数 32位:到最后一个节点的偏移量  16位:节点字段数量
 //zlbytes+zltail+zllen
 define ZIPLIST_HEADER_SIZE     (sizeof(uint32_t)*2+sizeof(uint16_t))
 //存储特殊值0xFF ( =255 ) ，用于标记压缩列表尾端  1个字节
@@ -190,6 +194,16 @@ unsigned char *ziplistNew(void) {
 ```
 
 ### ziplist的新增
+
+​		1.获取上一个节点的偏移量
+
+​		2.将当前内容进行编码，计算出当前节点的编码长度
+
+​		3.判断空间是否足够插入
+
+​		4.扩容
+
+​		5.插入节点并设置节点值
 
 ```c
 define ZIPLIST_HEAD 0
@@ -366,6 +380,12 @@ unsigned char *ziplistResize(unsigned char *zl, unsigned int len) {
 
 ### ziplist的查询
 
+​		1.根据index判断是正向查询还是逆向查询
+
+​			2.若是正向，获取头节点的偏移量，后移index个节点
+
+​			3.若是逆向,	获取为节点的偏移量, 每个节点都记录了前置节点的长度，前移index个节点
+
 ```C
 unsigned char *ziplistIndex(unsigned char *zl, int index) {
     unsigned char *p;
@@ -531,7 +551,11 @@ unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p) {
 ### 2-1.Hash类型:
 
 ```
-
+ Hash类型底层的数据结构为:压缩列表 ziplist 和 字典 dict 
+ 
+ 当满足这两条件时,以ziplist存储,否则转化为dict。
+ 1.当键值对小于hash-max-ziplist-entries(默认128)
+ 2.保存的所有键值对的长度都小于hash-max-ziplist-value(默认64)字节
 ```
 
 
