@@ -2054,6 +2054,49 @@ public class Dp {
         return Math.max(dp1, dp2);
     }
 
+    public List<Integer> countSmaller(int[] nums) {
+        int[] res = new int[nums.length];
+        TreeMap<Integer, Integer> moneyCount = new TreeMap<>((m1, m2) -> m2 - m1);
+        for (int i = nums.length - 1; i >= 0; i--) {
+            int count = 0;
+            for (int j = i + 1; j < nums.length; j++) {
+                if (nums[j] < nums[i]) {
+                    count++;
+                }
+                if (nums[i] == nums[j]) {
+                    count += res[j];
+                    break;
+                }
+
+            }
+            res[i] = count;
+        }
+        return Arrays.stream(res).boxed().collect(Collectors.toList());
+    }
+
+    public String reformatDate(String date) {
+        Map<String, String> month = new HashMap<>();
+        month.put("Jan", "01");
+        month.put("Feb", "02");
+        month.put("Mar", "03");
+        month.put("Apr", "04");
+        month.put("May", "05");
+        month.put("Jun", "06");
+        month.put("Jul", "07");
+        month.put("Aug", "08");
+        month.put("Sep", "09");
+        month.put("Oct", "10");
+        month.put("Nov", "11");
+        month.put("Dec", "12");
+
+        String[] s = date.split(" ");
+        String day = s[0].substring(0, s[0].length() - 2);
+        if (day.length()==1){
+            day = "0"+day;
+        }
+        return s[2] + "-" + month.get(s[1]) + "-"+ day;
+    }
+
     public static void main(String[] args) {
         System.out.println(new Dp().numSubmat(new int[][]{{1, 0, 1}, {1, 1, 0}, {1, 1, 0}}));
     }

@@ -546,21 +546,7 @@ unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p) {
 
 
 
-## 2.Redis常用类型
-
-### 2-1.Hash类型:
-
-```
- Hash类型底层的数据结构为:压缩列表 ziplist 和 字典 dict 
- 
- 当满足这两条件时,以ziplist存储,否则转化为dict。
- 1.当键值对小于hash-max-ziplist-entries(默认128)
- 2.保存的所有键值对的长度都小于hash-max-ziplist-value(默认64)字节
-```
-
-
-
-## 3.Redis数据库
+## 2.Redis数据库
 
 ```c
 struct redisServer {
@@ -569,7 +555,7 @@ struct redisServer {
 }
 
 typedef struct redisDb {
-    dict *dict;                 //redis的KEY映射
+    dict *dict;                 //redis的KEY映射 Map<key,redisObject>
     dict *expires;              //过期时间
     dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
     dict *ready_keys;           /* Blocked keys that received a PUSH */
@@ -579,7 +565,296 @@ typedef struct redisDb {
     unsigned long expires_cursor; /* Cursor of the active expire cycle. */
     list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
 } redisDb;
+
+//redis type类型
+define OBJ_STRING 0  
+define OBJ_LIST 1      
+define OBJ_SET 2      
+define OBJ_ZSET 3     
+define OBJ_HASH 4  
+define OBJ_MODULE 5  
+define OBJ_STREAM 6 
+
+//encoding ，也表示ptr的数据结构
+define OBJ_ENCODING_RAW 0     
+define OBJ_ENCODING_INT 1    
+define OBJ_ENCODING_HT 2  //字典  
+define OBJ_ENCODING_ZIPMAP 3 
+define OBJ_ENCODING_LINKEDLIST 4 
+define OBJ_ENCODING_ZIPLIST 5   //压缩列表
+define OBJ_ENCODING_INTSET 6
+define OBJ_ENCODING_SKIPLIST 7 
+define OBJ_ENCODING_EMBSTR 8 
+define OBJ_ENCODING_QUICKLIST 9
+define OBJ_ENCODING_STREAM 10  
+
+typedef struct redisObject {
+    unsigned type:4; //redis type(OBJ_STRING|OBJ_LIST|OBJ_SET|OBJ_ZSET|OBJ_HASH|OBJ_MODULE|OBJ_STREAM)
+    unsigned encoding:4;
+    unsigned lru:LRU_BITS; //全局时钟  LFU的8位+时间戳16位
+    int refcount;
+    void *ptr; //底层数据指针
+}
 ```
+
+### 2-1.根据key获取redisObject对象
+
+```c
+define LOOKUP_NONE 0
+robj *lookupKeyWrite(redisDb *db, robj *key) {
+    return lookupKeyWriteWithFlags(db, key, LOOKUP_NONE);
+}
+
+robj *lookupKeyWriteWithFlags(redisDb *db, robj *key, int flags) {
+    //是否需要过期
+    expireIfNeeded(db,key);
+    //查找key
+    return lookupKey(db,key,flags);
+}
+
+robj *lookupKey(redisDb *db, robj *key, int flags) {
+    //从dh.dict字典中查询key
+    dictEntry *de = dictFind(db->dict,key->ptr);
+    if (de) {
+        //若是存在,获取对象
+        robj *val = dictGetVal(de);
+        //更新
+        if (!hasActiveChildProcess() && !(flags & LOOKUP_NOTOUCH)){
+            if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
+                updateLFU(val);
+            } else {
+                val->lru = LRU_CLOCK();
+            }
+        }
+        return val;
+    } else {
+        //字段中没有返回NULL
+        return NULL;
+    }
+}
+```
+
+### 2-2.创建redisObject对象
+
+```c
+define MAXMEMORY_FLAG_LFU (1<<1) 
+
+robj *createObject(int type, void *ptr) {
+    //申请对象空间
+    robj *o = zmalloc(sizeof(*o));
+    //设置object类型
+    o->type = type;
+    o->encoding = OBJ_ENCODING_RAW;
+    o->ptr = ptr;
+    o->refcount = 1;
+
+	//设置LRU时钟或者LFU计数器
+    //maxmemory_policy:过期策略
+    if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
+        o->lru = (LFUGetTimeInMinutes()<<8) | LFU_INIT_VAL;
+    } else {
+        o->lru = LRU_CLOCK();
+    }
+    return o;
+}
+
+unsigned int LRU_CLOCK(void) {
+    unsigned int lruclock;
+    if (1000/server.hz <= LRU_CLOCK_RESOLUTION) {
+        lruclock = server.lruclock;
+    } else {
+        lruclock = getLRUClock();
+    }
+    return lruclock;
+}
+```
+
+
+
+## 3.Redis常用类型
+
+### 3-1.Hash类型:
+
+```
+ Hash类型底层的数据结构为:压缩列表 ziplist 和 字典 dict 
+ 
+ 当满足这两条件时,以ziplist存储,否则转化为dict。
+ 1.当键值对小于hash-max-ziplist-entries(默认128)
+ 2.保存的所有键值对的长度都小于hash-max-ziplist-value(默认64)字节
+```
+
+#### ziplist转化为dict
+
+```c
+void hashTypeConvert(robj *o, int enc) {
+    if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+        hashTypeConvertZiplist(o, enc);
+    } else if (o->encoding == OBJ_ENCODING_HT) {
+        serverPanic("Not implemented");
+    } else {
+        serverPanic("Unknown hash encoding");
+    }
+}
+
+define DICT_OK 0
+define C_ERR                   -1
+    
+define OBJ_HASH_KEY 1
+define OBJ_HASH_VALUE 2
+//ziplist转化为其他类型,enc:要转化成的类型
+void hashTypeConvertZiplist(robj *o, int enc) {
+    serverAssert(o->encoding == OBJ_ENCODING_ZIPLIST);
+
+    if (enc == OBJ_ENCODING_ZIPLIST) {
+		//ziplist转ziplist，不需要操作
+    } else if (enc == OBJ_ENCODING_HT) {
+        //ziplist转dict
+        hashTypeIterator *hi;
+        dict *dict;
+        int ret;
+		// 新建迭代器
+        hi = hashTypeInitIterator(o);
+        //创建一个字典
+        dict = dictCreate(&hashDictType, NULL);
+		// 遍历元素
+        while (hashTypeNext(hi) != C_ERR) {
+            sds key, value;
+
+            // 键值对在 压缩列表中是连续成对出现，所以获取都是连续读取
+            key = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_KEY);
+            value = hashTypeCurrentObjectNewSds(hi,OBJ_HASH_VALUE);
+            //将键值添加到字典
+            ret = dictAdd(dict, key, value);
+            if (ret != DICT_OK) {
+                //添加失败
+                serverLogHexDump(LL_WARNING,"ziplist with dup elements dump",
+                    o->ptr,ziplistBlobLen(o->ptr));
+                serverPanic("Ziplist corruption detected");
+            }
+        }
+        // 释放迭代器
+        hashTypeReleaseIterator(hi);
+        //释放ziplist的内存
+        zfree(o->ptr);
+        //编码设置为字典
+        o->encoding = OBJ_ENCODING_HT;
+        //数据指向新建的字典
+        o->ptr = dict;
+    } else {
+        serverPanic("Unknown hash encoding");
+    }
+}
+```
+
+#### hash类型查询并创建对象
+
+​		1.从redisDb.dict中根据key查询
+
+​				2.若对象不存在则创建一个初始HashObject(即redisObject   type:OBJ_HASH），
+
+​				初始结构为ziplist，并保存dbAdd()
+
+​				3.若对象存在，则判断是否是HASH类型，若类型错误返回NULL
+
+```c
+robj *hashTypeLookupWriteOrCreate(client *c, robj *key) {
+    //根据key获取对象
+    robj *o = lookupKeyWrite(c->db,key);
+    if (o == NULL) {
+        //对象不存在，创建一个Hash类型的对象
+        o = createHashObject();
+        //新增key
+        dbAdd(c->db,key,o);
+    } else {
+        //对象存在,类型不是OBJ_HASH,类型不正确则返回NULL
+        if (o->type != OBJ_HASH) {
+            addReply(c,shared.wrongtypeerr);
+            return NULL;
+        }
+    }
+    return o;
+}
+
+define OBJ_HASH 4
+robj *createHashObject(void) {
+    //创建一个压缩链表
+    unsigned char *zl = ziplistNew();
+    //创建一个redisObject对象，type为OBJ_HASH,数据为压缩链表
+    robj *o = createObject(OBJ_HASH, zl);
+    //编码也也会压缩列表
+    o->encoding = OBJ_ENCODING_ZIPLIST;
+    return o;
+}
+
+void dbAdd(redisDb *db, robj *key, robj *val) {
+    sds copy = sdsdup(key->ptr);
+    //新key增加到redisDb的字典中
+    int retval = dictAdd(db->dict, copy, val);
+
+    serverAssertWithInfo(NULL,key,retval == DICT_OK);
+    if (val->type == OBJ_LIST ||
+        val->type == OBJ_ZSET ||
+        val->type == OBJ_STREAM)
+        signalKeyAsReady(db, key);
+    if (server.cluster_enabled) slotToKeyAdd(key->ptr);
+}
+```
+
+
+
+####  hset指令
+
+```c
+void hsetCommand(client *c) {
+    int i, created = 0;
+    robj *o;
+	// 验证是否缺少参数，正常参数应该是 偶数(键值对)
+    if ((c->argc % 2) == 1) {
+        addReplyError(c,"wrong number of arguments for HMSET");
+        return;
+    }
+	//查找对象,若查找不到则创建一个新的对象
+    //若返回值是NULL则说明key存在但类型不正确
+    if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
+    
+    //判断是否需要将 ziplist 转为 hashtable
+    hashTypeTryConversion(o,c->argv,2,c->argc-1);
+
+    for (i = 2; i < c->argc; i += 2)
+        created += !hashTypeSet(o,c->argv[i]->ptr,c->argv[i+1]->ptr,HASH_SET_COPY);
+
+    /* HMSET (deprecated) and HSET return value is different. */
+    char *cmdname = c->argv[0]->ptr;
+    if (cmdname[1] == 's' || cmdname[1] == 'S') {
+        /* HSET */
+        addReplyLongLong(c, created);
+    } else {
+        /* HMSET */
+        addReply(c, shared.ok);
+    }
+    signalModifiedKey(c,c->db,c->argv[1]);
+    notifyKeyspaceEvent(NOTIFY_HASH,"hset",c->argv[1],c->db->id);
+    server.dirty++;
+}
+
+//判断是否需要将 ziplist 转为 hashtable
+void hashTypeTryConversion(robj *o, robj **argv, int start, int end) {
+    int i;
+	//当前对象类型已经是字典直接返回
+    if (o->encoding != OBJ_ENCODING_ZIPLIST) return;
+
+    for (i = start; i <= end; i++) {
+        //若插入的数量大小超过hash_max_ziplist_value时转化为字典结构
+        if (sdsEncodedObject(argv[i]) &&
+            sdslen(argv[i]->ptr) > server.hash_max_ziplist_value){
+            hashTypeConvert(o, OBJ_ENCODING_HT);
+            break;
+        }
+    }
+}
+```
+
+
 
 ## 4. Redis缓存淘汰策略
 
@@ -597,12 +872,6 @@ typedef struct redisDb {
 ### LRU的原理
 
 ```c
-typedef struct redisObject {
-    unsigned type:4;
-    unsigned encoding:4;
-    unsigned lru:LRU_BITS; //全局时钟  LFU的8位+时间戳16位
-    int refcount;
-    void *ptr;
-}
+
 ```
 
