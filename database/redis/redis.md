@@ -144,6 +144,10 @@ ziplist压缩列表结构:
 
 ->entry...(压缩列表存储节点链表)->zlend(存储特殊值0xFF ( =255 ) ，用于标记压缩列表尾端)
 
+
+
+ziplist存储内存是连续的，内存紧凑，占用内存少，更容易加载到CPU
+
 ```c
 //每一个节点,都能存储一个字节数组或整数值
 typedef struct zlentry {
@@ -544,7 +548,126 @@ unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p) {
 }
 ```
 
+### 1-3. SDS(动态字符串)
 
+SDS分配一段连续的内存来存储动态字符串：
+
+​	header (len / alloc / flags) + buf
+
+​		1.获取字符串长度O(1)
+
+​		2.拒绝缓冲区溢出
+
+​		3.优化动态字符串的内存分配
+
+​		4.二进制安全
+
+```c
+typedef char *sds;
+
+//SDS的类型
+define SDS_TYPE_5  0
+define SDS_TYPE_8  1
+define SDS_TYPE_16 2
+define SDS_TYPE_32 3
+define SDS_TYPE_64 4
+
+//适配不同长度
+struct __attribute__ ((__packed__)) sdshdr8 {
+    uint8_t len; //字符串真实长度，不包括终止符
+    uint8_t alloc;  //字符串最大容量，不包括终止符
+    unsigned char flags; //head的类型
+    char buf[]; //字符串主体
+};
+struct __attribute__ ((__packed__)) sdshdr16 {
+    uint16_t len;
+    uint16_t alloc; 
+    unsigned char flags;
+    char buf[];
+};
+struct __attribute__ ((__packed__)) sdshdr32 {
+    uint32_t len; 
+    uint32_t alloc;
+    unsigned char flags; 
+    char buf[];
+};
+struct __attribute__ ((__packed__)) sdshdr64 {
+    uint64_t len; 
+    uint64_t alloc;
+    unsigned char flags;
+    char buf[];
+};
+```
+
+#### SDS创建
+
+```c
+sds sdsnewlen(const void *init, size_t initlen) {
+    void *sh;
+    sds s;
+    // 根据长度 获取初始 type
+    char type = sdsReqType(initlen);
+  	// 空的字符串通常被创建成 type 8，因为 type 5 已经不实用了
+    if (type == SDS_TYPE_5 && initlen == 0) type = SDS_TYPE_8;
+    // 获取 header 长度
+    int hdrlen = sdsHdrSize(type);
+    
+    unsigned char *fp;
+	// 创建内存空间，空间大小等于 header长度+主体长度 + 1，后面加1是因为需要追加结束符，兼容 C 字符串
+    sh = s_malloc(hdrlen+initlen+1);
+    if (sh == NULL) return NULL;
+    if (init==SDS_NOINIT)
+        init = NULL;
+    else if (!init)
+         // 初始化
+        memset(sh, 0, hdrlen+initlen+1);
+     // 主体内容 指针地址，相当于整个 SDS 结构体向后偏移了整个 header 长度
+    s = (char*)sh+hdrlen;
+    // flags 指针为 主体 SDS 内容向前偏移1位（这个上面我们已经解释过了）
+    fp = ((unsigned char*)s)-1;
+    // 根据 type 值进行 header 各个字段的初始化
+    switch(type) {
+        case SDS_TYPE_5: {
+            *fp = type | (initlen << SDS_TYPE_BITS);
+            break;
+        }
+        case SDS_TYPE_8: {
+            SDS_HDR_VAR(8,s);
+            sh->len = initlen;
+            sh->alloc = initlen;
+            *fp = type;
+            break;
+        }
+        case SDS_TYPE_16: {
+            SDS_HDR_VAR(16,s);
+            sh->len = initlen;
+            sh->alloc = initlen;
+            *fp = type;
+            break;
+        }
+        case SDS_TYPE_32: {
+            SDS_HDR_VAR(32,s);
+            sh->len = initlen;
+            sh->alloc = initlen;
+            *fp = type;
+            break;
+        }
+        case SDS_TYPE_64: {
+            SDS_HDR_VAR(64,s);
+            sh->len = initlen;
+            sh->alloc = initlen;
+            *fp = type;
+            break;
+        }
+    }
+    if (initlen && init)
+        // 字符串拷贝
+        memcpy(s, init, initlen);
+    // 兼容 C 函数，在 字符串后添加结束符
+    s[initlen] = '\0';
+    return s;
+}
+```
 
 ## 2.Redis数据库
 
@@ -576,15 +699,15 @@ define OBJ_MODULE 5
 define OBJ_STREAM 6 
 
 //encoding ，也表示ptr的数据结构
-define OBJ_ENCODING_RAW 0     
-define OBJ_ENCODING_INT 1    
+define OBJ_ENCODING_RAW 0 //简单SDS    
+define OBJ_ENCODING_INT 1 //整数   
 define OBJ_ENCODING_HT 2  //字典  
 define OBJ_ENCODING_ZIPMAP 3 
 define OBJ_ENCODING_LINKEDLIST 4 
 define OBJ_ENCODING_ZIPLIST 5   //压缩列表
 define OBJ_ENCODING_INTSET 6
 define OBJ_ENCODING_SKIPLIST 7 
-define OBJ_ENCODING_EMBSTR 8 
+define OBJ_ENCODING_EMBSTR 8 //redisObject+SDS,连续内存字符串
 define OBJ_ENCODING_QUICKLIST 9
 define OBJ_ENCODING_STREAM 10  
 
@@ -666,6 +789,54 @@ unsigned int LRU_CLOCK(void) {
         lruclock = getLRUClock();
     }
     return lruclock;
+}
+```
+
+#### 2-3. 根据key获取object并返回值
+
+```c
+robj *lookupKeyReadOrReply(client *c, robj *key, robj *reply) {
+    robj *o = lookupKeyRead(c->db, key);
+    if (!o) addReply(c,reply);
+    return o;
+}
+
+robj *lookupKeyRead(redisDb *db, robj *key) {
+    return lookupKeyReadWithFlags(db,key,LOOKUP_NONE);
+}
+
+robj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags) {
+    robj *val;
+
+    //判断key是否过期
+    if (expireIfNeeded(db,key) == 1) {
+        if (server.masterhost == NULL) {
+            //master节点，尽快返回NULL
+            server.stat_keyspace_misses++;
+            notifyKeyspaceEvent(NOTIFY_KEY_MISS, "keymiss", key, db->id);
+            return NULL;
+        }
+
+       	//从节点
+        if (server.current_client &&
+            server.current_client != server.master &&
+            server.current_client->cmd &&
+            server.current_client->cmd->flags & CMD_READONLY)
+        {
+            server.stat_keyspace_misses++;
+            notifyKeyspaceEvent(NOTIFY_KEY_MISS, "keymiss", key, db->id);
+            return NULL;
+        }
+    }
+    //查询redisObjecy
+    val = lookupKey(db,key,flags);
+    if (val == NULL) {
+        server.stat_keyspace_misses++;
+        notifyKeyspaceEvent(NOTIFY_KEY_MISS, "keymiss", key, db->id);
+    }
+    else
+        server.stat_keyspace_hits++;
+    return val;
 }
 ```
 
@@ -805,6 +976,7 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
 ####  hset指令
 
 ```c
+define HASH_SET_COPY 0
 void hsetCommand(client *c) {
     int i, created = 0;
     robj *o;
@@ -821,10 +993,12 @@ void hsetCommand(client *c) {
     hashTypeTryConversion(o,c->argv,2,c->argc-1);
 
     for (i = 2; i < c->argc; i += 2)
+         // 依次成对添加 元素+值，created:添加成功个数
         created += !hashTypeSet(o,c->argv[i]->ptr,c->argv[i+1]->ptr,HASH_SET_COPY);
 
-    /* HMSET (deprecated) and HSET return value is different. */
+   	//获取指令名称
     char *cmdname = c->argv[0]->ptr;
+    //判断第二个字母是不是S
     if (cmdname[1] == 's' || cmdname[1] == 'S') {
         /* HSET */
         addReplyLongLong(c, created);
@@ -832,8 +1006,11 @@ void hsetCommand(client *c) {
         /* HMSET */
         addReply(c, shared.ok);
     }
+    // 发送键修改信号
     signalModifiedKey(c,c->db,c->argv[1]);
+     // 发送事件通知
     notifyKeyspaceEvent(NOTIFY_HASH,"hset",c->argv[1],c->db->id);
+      // 数据保存记录增加，dirty 用来存储上次保存前所有数据变动的长度，用于以后判断在执行命令的过程中是否有了db中数据的变化，用得到的结果来判断要不要执行aof操作
     server.dirty++;
 }
 
@@ -851,6 +1028,229 @@ void hashTypeTryConversion(robj *o, robj **argv, int start, int end) {
             break;
         }
     }
+}
+
+//HASH数据类型
+define HASH_SET_TAKE_FIELD (1<<0)
+define HASH_SET_TAKE_VALUE (1<<1)
+define HASH_SET_COPY 0
+
+int hashTypeSet(robj *o, sds field, sds value, int flags) {
+    int update = 0;
+	//ziplist类型时插入
+    if (o->encoding == OBJ_ENCODING_ZIPLIST) {
+        unsigned char *zl, *fptr, *vptr;
+		// 获取 ziplist 指针
+        zl = o->ptr;
+        // 获取 ziplist 的头指针
+        fptr = ziplistIndex(zl, ZIPLIST_HEAD);
+        if (fptr != NULL) {
+            // 获取 数据部分
+            fptr = ziplistFind(fptr, (unsigned char*)field, sdslen(field), 1);
+            if (fptr != NULL) {
+                // 获取挨后续节点
+                vptr = ziplistNext(zl, fptr);
+                serverAssert(vptr != NULL);
+                // 更新标识不需要新增
+                update = 1;
+
+                // 先删除，在添加
+                zl = ziplistDelete(zl, &vptr);
+                zl = ziplistInsert(zl, vptr, (unsigned char*)value,
+                        sdslen(value));
+            }
+        }
+		// 原本不存在，则添加
+        if (!update) {
+            // 将 key push 进 ziplist 尾部
+            zl = ziplistPush(zl, (unsigned char*)field, sdslen(field),
+                    ZIPLIST_TAIL);
+            // 将 value push 进 ziplist 尾部
+            zl = ziplistPush(zl, (unsigned char*)value, sdslen(value),
+                    ZIPLIST_TAIL);
+        }
+        o->ptr = zl;
+
+        // 判断是否需要转换编码
+        if (hashTypeLength(o) > server.hash_max_ziplist_entries)
+            hashTypeConvert(o, OBJ_ENCODING_HT);
+    } else if (o->encoding == OBJ_ENCODING_HT) {
+        //hashtable类型时插入
+        //获取节点
+        dictEntry *de = dictFind(o->ptr,field);
+        if (de) {
+            //节点存在
+            // 释放键值，重新添加
+            sdsfree(dictGetVal(de));
+            // 原值添加
+            if (flags & HASH_SET_TAKE_VALUE) {
+                dictGetVal(de) = value;
+                value = NULL;
+            } else {
+                // 字符串值添加
+                dictGetVal(de) = sdsdup(value);
+            }
+            update = 1;
+        } else {
+            sds f,v;
+            // key 格式化
+            if (flags & HASH_SET_TAKE_FIELD) {
+                f = field;
+                field = NULL;
+            } else {
+                f = sdsdup(field);
+            }
+            // value 格式化
+            if (flags & HASH_SET_TAKE_VALUE) {
+                v = value;
+                value = NULL;
+            } else {
+                v = sdsdup(value);
+            }
+            //键值添加
+            dictAdd(o->ptr,f,v);
+        }
+    } else {
+        serverPanic("Unknown hash encoding");
+    }
+
+    // 根据需求释放变量
+    if (flags & HASH_SET_TAKE_FIELD && field) sdsfree(field);
+    if (flags & HASH_SET_TAKE_VALUE && value) sdsfree(value);
+    return update;
+}
+```
+
+### 3-2. String类型
+
+```C
+编码类型:
+	OBJ_ENCODING_RAW: 字符串（大于44字节）
+	OBJ_ENCODING_INT: 整数值
+	OBJ_ENCODING_EMBSTR: 字符串（小于44字节）
+        
+    embstr: embstr字符串调用一次内存分配函数 申请了一块连续的内存，依次包含redisObject和sds两个结构
+    raw:分两次申请内存分配
+```
+
+#### get指令
+
+```c
+void getCommand(client *c) {
+    getGenericCommand(c);
+}
+
+int getGenericCommand(client *c) {
+    robj *o;
+	// 查找元素
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL)
+        return C_OK;
+	//类型不是STRING,类型错误抛异常
+    if (o->type != OBJ_STRING) {
+        addReply(c,shared.wrongtypeerr);
+        return C_ERR;
+    } else {
+        //返回信息
+        addReplyBulk(c,o);
+        return C_OK;
+    }
+}
+```
+
+#### set指令
+
+```C
+define OBJ_SET_NO_FLAGS 0
+define OBJ_SET_NX (1<<0)         //key不存在时保存
+define OBJ_SET_XX (1<<1)         //key存在时保存
+define OBJ_SET_EX (1<<2)         //key保存设置过期时间 单位秒
+define OBJ_SET_PX (1<<3)         //key保存设置过期时间 单位毫秒
+define OBJ_SET_KEEPTTL (1<<4)    //保存保持当前过期时间
+
+void setCommand(client *c) {
+    int j;
+    robj *expire = NULL;
+    int unit = UNIT_SECONDS;
+    // 用于标记ex/px和nx/xx命令参数
+    int flags = OBJ_SET_NO_FLAGS;
+	// 从命令串的第四个参数开始，查看其是否设定了ex/px和nx/xx
+    for (j = 3; j < c->argc; j++) {
+        char *a = c->argv[j]->ptr;
+        robj *next = (j == c->argc-1) ? NULL : c->argv[j+1];
+
+        if ((a[0] == 'n' || a[0] == 'N') &&
+            (a[1] == 'x' || a[1] == 'X') && a[2] == '\0' &&
+            !(flags & OBJ_SET_XX))
+        {
+            flags |= OBJ_SET_NX;
+        } else if ((a[0] == 'x' || a[0] == 'X') &&
+                   (a[1] == 'x' || a[1] == 'X') && a[2] == '\0' &&
+                   !(flags & OBJ_SET_NX))
+        {
+            flags |= OBJ_SET_XX;
+        } else if (!strcasecmp(c->argv[j]->ptr,"KEEPTTL") &&
+                   !(flags & OBJ_SET_EX) && !(flags & OBJ_SET_PX))
+        {
+            flags |= OBJ_SET_KEEPTTL;
+        } else if ((a[0] == 'e' || a[0] == 'E') &&
+                   (a[1] == 'x' || a[1] == 'X') && a[2] == '\0' &&
+                   !(flags & OBJ_SET_KEEPTTL) &&
+                   !(flags & OBJ_SET_PX) && next)
+        {
+            flags |= OBJ_SET_EX;
+            unit = UNIT_SECONDS;
+            expire = next;
+            j++;
+        } else if ((a[0] == 'p' || a[0] == 'P') &&
+                   (a[1] == 'x' || a[1] == 'X') && a[2] == '\0' &&
+                   !(flags & OBJ_SET_KEEPTTL) &&
+                   !(flags & OBJ_SET_EX) && next)
+        {
+            flags |= OBJ_SET_PX;
+            unit = UNIT_MILLISECONDS;
+            expire = next;
+            j++;
+        } else {
+            addReply(c,shared.syntaxerr);
+            return;
+        }
+    }
+	// 判断value是否可以编码成整数，如果能则编码；反之不做处理
+    c->argv[2] = tryObjectEncoding(c->argv[2]);
+    // 调用底层函数进行键值对设定
+    setGenericCommand(c,flags,c->argv[1],c->argv[2],expire,unit,NULL,NULL);
+}
+
+void setGenericCommand(client *c, int flags, robj *key, robj *val, 
+                       robj *expire, int unit, robj *ok_reply, robj *abort_reply) {
+    long long milliseconds = 0; 
+	// 如果设定了过期时间
+    if (expire) {
+        // 验证 expire对象中的具体时间值
+        if (getLongLongFromObjectOrReply(c, expire, &milliseconds, NULL) != C_OK)
+            return;
+        // 验证时间
+        if (milliseconds <= 0) {
+            addReplyErrorFormat(c,"invalid expire time in %s",c->cmd->name);
+            return;
+        }
+        // 设置时间单位
+        if (unit == UNIT_SECONDS) milliseconds *= 1000;
+    }
+
+    if ((flags & OBJ_SET_NX && lookupKeyWrite(c->db,key) != NULL) ||
+        (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL))
+    {
+        addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
+        return;
+    }
+    genericSetKey(c,c->db,key,val,flags & OBJ_SET_KEEPTTL,1);
+    server.dirty++;
+    if (expire) setExpire(c,c->db,key,mstime()+milliseconds);
+    notifyKeyspaceEvent(NOTIFY_STRING,"set",key,c->db->id);
+    if (expire) notifyKeyspaceEvent(NOTIFY_GENERIC,
+        "expire",key,c->db->id);
+    addReply(c, ok_reply ? ok_reply : shared.ok);
 }
 ```
 
