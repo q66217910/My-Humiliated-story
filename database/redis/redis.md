@@ -669,6 +669,79 @@ sds sdsnewlen(const void *init, size_t initlen) {
 }
 ```
 
+### 1-4. Bitops(位图)
+
+#### setbit:
+
+​	**SETBIT key offset value**
+
+```C
+void setbitCommand(client *c) {
+    robj *o;
+    char *err = "bit is not an integer or out of range";
+    size_t bitoffset;
+    ssize_t byte, bit;
+    int byteval, bitval;
+    long on;
+
+    //解析偏移量offset,(非数字或者负数/超过512MB)
+    if (getBitOffsetFromArgument(c,c->argv[2],&bitoffset,0,0) != C_OK)
+        return;
+	
+    //解析value 
+    if (getLongFromObjectOrReply(c,c->argv[3],&on,err) != C_OK)
+        return;
+    
+	//value只能是0/1
+    if (on & ~1) {
+        addReplyError(c,err);
+        return;
+    }
+	
+    //获取redisObject，bitoffset偏移位用于扩容sds
+    if ((o = lookupStringForBitCommand(c,bitoffset)) == NULL) return;
+
+    //sds8 一位里存8个字节,所以bitoffset/8，为存储的sds的buf位置,所以bitoffset%8为具体位置
+    byte = bitoffset >> 3;
+    //当前buf的内容
+    byteval = ((uint8_t*)o->ptr)[byte];
+    //获取bitoffset的值（bitoffset & 0x7=bitoffset%8）
+    bit = 7 - (bitoffset & 0x7);
+    bitval = byteval & (1 << bit);
+
+    //更新值
+    byteval &= ~(1 << bit);
+    byteval |= ((on & 0x1) << bit);
+    //保存更新后的值
+    ((uint8_t*)o->ptr)[byte] = byteval;
+    signalModifiedKey(c,c->db,c->argv[1]);
+    notifyKeyspaceEvent(NOTIFY_STRING,"setbit",c->argv[1],c->db->id);
+    server.dirty++;
+    addReply(c, bitval ? shared.cone : shared.czero);
+}
+
+robj *lookupStringForBitCommand(client *c, size_t maxbit) {
+    size_t byte = maxbit >> 3;
+    //获取key
+    robj *o = lookupKeyWrite(c->db,c->argv[1]);
+
+    if (o == NULL) {
+        //创建一个String类型的key
+        //value 为一个 sds结构
+        o = createObject(OBJ_STRING,sdsnewlen(NULL, byte+1));
+        dbAdd(c->db,c->argv[1],o);
+    } else {
+        if (checkType(c,o,OBJ_STRING)) return NULL;
+        o = dbUnshareStringValue(c->db,c->argv[1],o);
+        //给sds扩容,若长度够则不需要
+        o->ptr = sdsgrowzero(o->ptr,byte+1);
+    }
+    return o;
+}
+```
+
+
+
 ## 2.Redis数据库
 
 ```c
@@ -1237,17 +1310,22 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val,
         // 设置时间单位
         if (unit == UNIT_SECONDS) milliseconds *= 1000;
     }
-
+	
+    // 验证 NX 和 XX，NX 键不存在，XX 键存在
     if ((flags & OBJ_SET_NX && lookupKeyWrite(c->db,key) != NULL) ||
-        (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL))
-    {
+        (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL)){
         addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
         return;
     }
+    // 关联到 db
     genericSetKey(c,c->db,key,val,flags & OBJ_SET_KEEPTTL,1);
+    // 数据保存记录增加，dirty 用来存储上次保存前所有数据变动的长度，用于以后判断在执行命令的过程中是否有了db中数据的变化，用得到的结果来判断要不要执行aof操作
     server.dirty++;
+    // 设置过期时间
     if (expire) setExpire(c,c->db,key,mstime()+milliseconds);
+    // 发送事件通知
     notifyKeyspaceEvent(NOTIFY_STRING,"set",key,c->db->id);
+    // 发送定期事件通知
     if (expire) notifyKeyspaceEvent(NOTIFY_GENERIC,
         "expire",key,c->db->id);
     addReply(c, ok_reply ? ok_reply : shared.ok);
