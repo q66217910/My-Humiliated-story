@@ -758,7 +758,7 @@ typedef struct redisDb {
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
     int id;                     //数据库id
     long long avg_ttl;          /* Average TTL, just for stats */
-    unsigned long expires_cursor; /* Cursor of the active expire cycle. */
+    unsigned long expires_cursor; //定时删除key的游标,用于没处理完定时退出了，下次不需要重新开始
     list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
 } redisDb;
 
@@ -776,19 +776,19 @@ define OBJ_ENCODING_RAW 0 //简单SDS
 define OBJ_ENCODING_INT 1 //整数   
 define OBJ_ENCODING_HT 2  //字典  
 define OBJ_ENCODING_ZIPMAP 3 
-define OBJ_ENCODING_LINKEDLIST 4 
+define OBJ_ENCODING_LINKEDLIST 4 // 双端链表
 define OBJ_ENCODING_ZIPLIST 5   //压缩列表
-define OBJ_ENCODING_INTSET 6
-define OBJ_ENCODING_SKIPLIST 7 
+define OBJ_ENCODING_INTSET 6	// 整数集合
+define OBJ_ENCODING_SKIPLIST 7 	// 跳跃表
 define OBJ_ENCODING_EMBSTR 8 //redisObject+SDS,连续内存字符串
-define OBJ_ENCODING_QUICKLIST 9
+define OBJ_ENCODING_QUICKLIST 9	// 由双端链表和压缩列表构成的快速列表
 define OBJ_ENCODING_STREAM 10  
 
 typedef struct redisObject {
     unsigned type:4; //redis type(OBJ_STRING|OBJ_LIST|OBJ_SET|OBJ_ZSET|OBJ_HASH|OBJ_MODULE|OBJ_STREAM)
     unsigned encoding:4;
-    unsigned lru:LRU_BITS; //全局时钟  LFU的8位+时间戳16位
-    int refcount;
+    unsigned lru:LRU_BITS; //记录最后一次被命令访问的时间 + LFU数据
+    int refcount;	// 引用计数
     void *ptr; //底层数据指针
 }
 ```
@@ -910,6 +910,430 @@ robj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags) {
     else
         server.stat_keyspace_hits++;
     return val;
+}
+```
+
+#### 2-4. 查看redisObject信息
+
+OBJECT 
+
+​	refcount：引用计数
+
+​	encoding：编码
+
+​	idletime：距离上次使用时间(s)
+
+​	freq：对象的访问频率，利用 LFU 原理获取频率值后进行排序，获取热点 key
+
+```c
+void objectCommand(client *c) {
+    robj *o;
+
+    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"help")) {
+        addReplyHelp(c, help);
+    } else if (!strcasecmp(c->argv[1]->ptr,"refcount") && c->argc == 3) {
+        //key的引用次数
+        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
+                == NULL) return;
+        addReplyLongLong(c,o->refcount);
+    } else if (!strcasecmp(c->argv[1]->ptr,"encoding") && c->argc == 3) {
+        //key的编码
+        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
+                == NULL) return;
+        addReplyBulkCString(c,strEncoding(o->encoding));
+    } else if (!strcasecmp(c->argv[1]->ptr,"idletime") && c->argc == 3) {
+        //key的距离上次使用的时间
+        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
+                == NULL) return;
+        if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
+            addReplyError(c,"");
+            return;
+        }
+        addReplyLongLong(c,estimateObjectIdleTime(o)/1000);
+    } else if (!strcasecmp(c->argv[1]->ptr,"freq") && c->argc == 3) {
+        //lru 高16位存上次使用时间(MIN) + 8位LRU数据 ,lfu_decay_time负载因子
+        //LRU数据-(server.unixtime-lru.unixtime)/server.lfu_decay_time
+        if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
+                == NULL) return;
+        if (!(server.maxmemory_policy & MAXMEMORY_FLAG_LFU)) {
+            addReplyError(c,"");
+            return;
+        }
+        addReplyLongLong(c,LFUDecrAndReturn(o));
+    } else {
+        addReplySubcommandSyntaxError(c);
+    }
+}
+```
+
+#### key过期时间的设置
+
+**EXPIRE key seconds**
+
+```c
+void expireCommand(client *c) {
+    expireGenericCommand(c,mstime(),UNIT_SECONDS);
+}
+
+void expireGenericCommand(client *c, long long basetime, int unit) {
+    robj *key = c->argv[1], *param = c->argv[2];
+    //要过期的时间
+    long long when; 
+	//获取传的过期时间值
+    if (getLongLongFromObjectOrReply(c, param, &when, NULL) != C_OK)
+        return;
+	//单位是秒*1000 转为毫秒
+    if (unit == UNIT_SECONDS) when *= 1000;
+    //mstime() 加上当前时间
+    when += basetime;
+
+   	//key不存在
+    if (lookupKeyWrite(c->db,key) == NULL) {
+        addReply(c,shared.czero);
+        return;
+    }
+
+	//过期时间小于当前时间&& 服务正在加载aof &&主节点
+    if (when <= mstime() && !server.loading && !server.masterhost) {
+        robj *aux;
+		//删除key
+        int deleted = server.lazyfree_lazy_expire ? dbAsyncDelete(c->db,key) :
+                                                    dbSyncDelete(c->db,key);
+        serverAssertWithInfo(c,key,deleted);
+        server.dirty++;
+
+       	
+        aux = server.lazyfree_lazy_expire ? shared.unlink : shared.del;
+        rewriteClientCommandVector(c,2,aux,key);
+        signalModifiedKey(c,c->db,key);
+        notifyKeyspaceEvent(NOTIFY_GENERIC,"del",key,c->db->id);
+        addReply(c, shared.cone);
+        return;
+    } else {
+        //设置过期时间
+        setExpire(c,c->db,key,when);
+        addReply(c,shared.cone);
+        signalModifiedKey(c,c->db,key);
+        notifyKeyspaceEvent(NOTIFY_GENERIC,"expire",key,c->db->id);
+        server.dirty++;
+        return;
+    }
+}
+
+void setExpire(client *c, redisDb *db, robj *key, long long when) {
+    dictEntry *kde, *de;
+	//获取redisObject
+    kde = dictFind(db->dict,key->ptr);
+    serverAssertWithInfo(NULL,key,kde != NULL);
+    //获取key的过期时间
+    de = dictAddOrFind(db->expires,dictGetKey(kde));
+    //保存key的过期时间
+    dictSetSignedIntegerVal(de,when);
+
+    //可写从节点
+    int writable_slave = server.masterhost && server.repl_slave_ro == 0;
+    if (c && writable_slave && !(c->flags & CLIENT_MASTER))
+        //从节点移除过期的key
+        rememberSlaveKeyWithExpire(db,key);
+}
+```
+
+#### key的过期
+
+```c
+int expireIfNeeded(redisDb *db, robj *key) {
+    //判断key是否过期
+    if (!keyIsExpired(db,key)) return 0;
+   
+    //如果是从节点,直接返回
+    if (server.masterhost != NULL) return 1;
+
+    //开始删除key
+    //过期key的数量+1
+    server.stat_expiredkeys++;
+    //同步过期指令到从服务的aof
+    propagateExpire(db,key,server.lazyfree_lazy_expire);
+    notifyKeyspaceEvent(NOTIFY_EXPIRED,"expired",key,db->id);
+    //是否懒过期(同步过期/异步过期)
+    int retval = server.lazyfree_lazy_expire ? dbAsyncDelete(db,key) :
+                                               dbSyncDelete(db,key);
+    if (retval) signalModifiedKey(NULL,db,key);
+    return retval;
+}
+
+int keyIsExpired(redisDb *db, robj *key) {
+    //获取该key过期时间
+    mstime_t when = getExpire(db,key);
+    mstime_t now;
+
+    //没设置过期时间
+    if (when < 0) return 0; 
+
+    //当AOF或者RDB加载时不过期
+    if (server.loading) return 0;
+
+    //是否在执行lua脚本
+    if (server.lua_caller) {
+        //执行lua的开始时间
+        now = server.lua_time_start;
+    }else if (server.fixed_time_expire > 0) {
+        now = server.mstime;
+    }else {
+        //最新的时间
+        now = mstime();
+    }
+	//如果当前时间比过期时间长，则key过期了
+    return now > when;
+}
+
+define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
+define dictGetSignedIntegerVal(he) ((he)->v.s64)
+long long getExpire(redisDb *db, robj *key) {
+    dictEntry *de;
+
+   	//判断db中key的存储数量
+    if (dictSize(db->expires) == 0 ||
+        //查找redisObject
+       (de = dictFind(db->expires,key->ptr)) == NULL) return -1;
+
+    serverAssertWithInfo(NULL,key,dictFind(db->dict,key->ptr) != NULL);
+    //获取该key过期时间
+    return dictGetSignedIntegerVal(de);
+}
+```
+
+#### 同步刪除key
+
+```c
+int dbSyncDelete(redisDb *db, robj *key) {
+ 	//判断过期时间dict
+    if (dictSize(db->expires) > 0) 
+        //字典中删除
+        dictDelete(db->expires,key->ptr);
+    //删除key
+    if (dictDelete(db->dict,key->ptr) == DICT_OK) {
+        //是否cluster
+        if (server.cluster_enabled) 
+            //hash槽的key删除
+            slotToKeyDel(key->ptr);
+        return 1;
+    } else {
+        return 0;
+    }
+}
+```
+
+#### 异步删除
+
+```C
+int dbAsyncDelete(redisDb *db, robj *key) {
+    if (dictSize(db->expires) > 0) 
+        dictDelete(db->expires,key->ptr);
+
+    //惰性删除，不会立即释放value的内存
+    dictEntry *de = dictUnlink(db->dict,key->ptr);
+    if (de) {
+        robj *val = dictGetVal(de);
+        //占用内存
+        size_t free_effort = lazyfreeGetFreeEffort(val);
+        //若引用为1
+        if (free_effort > LAZYFREE_THRESHOLD && val->refcount == 1) {
+            atomicIncr(lazyfree_objects,1);
+            bioCreateBackgroundJob(BIO_LAZY_FREE,val,NULL,NULL);
+            dictSetVal(db->dict,de,NULL);
+        }
+    }
+
+    if (de) {
+        //释放内存
+        dictFreeUnlinkedEntry(db->dict,de);
+        //删除hash槽
+        if (server.cluster_enabled) 
+            slotToKeyDel(key->ptr);
+        return 1;
+    } else {
+        return 0;
+    }
+}
+```
+
+#### 定时任务删除过期key
+
+```C
+define ACTIVE_EXPIRE_CYCLE_FAST 1
+void activeExpireCycle(int type) {
+    unsigned long
+    effort = server.active_expire_effort-1, 
+    config_keys_per_loop = ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP +
+                           ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP/4*effort,
+    config_cycle_fast_duration = ACTIVE_EXPIRE_CYCLE_FAST_DURATION +
+                                 ACTIVE_EXPIRE_CYCLE_FAST_DURATION/4*effort,
+    config_cycle_slow_time_perc = ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC +
+                                  2*effort,
+    config_cycle_acceptable_stale = ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE-
+                                    effort;
+
+  
+    //当前的db
+    static unsigned int current_db = 0;
+    static int timelimit_exit = 0;   
+    static long long last_fast_cycle = 0; 
+
+    int j, iteration = 0;
+    int dbs_per_call = CRON_DBS_PER_CALL;
+    long long start = ustime(), timelimit, elapsed;
+
+   	//当客户端暂停时停止
+    if (clientsArePaused()) return;
+
+    if (type == ACTIVE_EXPIRE_CYCLE_FAST) {
+     	//判断上一个定时退出没
+        if (!timelimit_exit &&
+            server.stat_expired_stale_perc < config_cycle_acceptable_stale)
+            return;
+
+        if (start < last_fast_cycle + (long long)config_cycle_fast_duration*2)
+            return;
+
+        last_fast_cycle = start;
+    }
+
+   	//不超过db数量
+    if (dbs_per_call > server.dbnum || timelimit_exit)
+        dbs_per_call = server.dbnum;
+
+   	//每次定时的迭代时间
+    timelimit = config_cycle_slow_time_perc*1000000/server.hz/100;
+    timelimit_exit = 0;
+    if (timelimit <= 0) timelimit = 1;
+
+    if (type == ACTIVE_EXPIRE_CYCLE_FAST)
+        timelimit = config_cycle_fast_duration; 
+
+    //全局的信息(总过期数)
+    long total_sampled = 0;
+    long total_expired = 0;
+
+    //开始遍历全部数据库
+    for (j = 0; j < dbs_per_call && timelimit_exit == 0; j++) {
+      	//单个db的过期数
+        unsigned long expired, sampled;
+		
+        //选择db
+        redisDb *db = server.db+(current_db % server.dbnum);
+		
+        //自增db
+        current_db++;
+
+        //若定时任务时间到了，还存在过期的key,允许过期没删除但逻辑上过期了的key
+        do {
+            //设置了过期的key的数量
+            unsigned long num, slots;
+            long long now, ttl_sum;
+            int ttl_samples;
+            iteration++;
+
+          	//没有过期的key，下一个db
+            if ((num = dictSize(db->expires)) == 0) {
+                db->avg_ttl = 0;
+                break;
+            }
+            //得到key的hash槽
+            slots = dictSlots(db->expires);
+            //当前时间
+            now = mstime();
+
+          	//当前hash槽太小
+            if (num && slots > DICT_HT_INITIAL_SIZE &&
+                (num*100/slots < 1)) break;
+
+            //收集周期
+            expired = 0;
+            //处理键数
+            sampled = 0;
+            ttl_sum = 0;
+            ttl_samples = 0;
+			
+           
+            if (num > config_keys_per_loop)
+                num = config_keys_per_loop;
+			
+            long max_buckets = num*20;
+            long checked_buckets = 0;
+
+            while (sampled < num && checked_buckets < max_buckets) {
+                //新旧两个表，防止在扩容
+                for (int table = 0; table < 2; table++) {
+                    if (table == 1 && !dictIsRehashing(db->expires)) break;
+					//过期游标
+                    unsigned long idx = db->expires_cursor;
+                    idx &= db->expires->ht[table].sizemask;
+                    dictEntry *de = db->expires->ht[table].table[idx];
+                    long long ttl;
+
+                  	//scan这个bucket
+                    checked_buckets++;
+                    while(de) {
+                      	//遍历整个链表
+                        dictEntry *e = de;
+                        de = de->next;
+
+                        //判断key是否过期
+                        ttl = dictGetSignedIntegerVal(e)-now;
+                        if (activeExpireCycleTryExpire(db,e,now)) expired++;
+                        if (ttl > 0) {
+                            //没有过期
+                            ttl_sum += ttl;
+                            ttl_samples++;
+                        }
+                        sampled++;
+                    }
+                }
+                //过期游标自增
+                db->expires_cursor++;
+            }
+            total_expired += expired;
+            total_sampled += sampled;
+
+            //是否更新数据库平均过期时间
+            if (ttl_samples) {
+                long long avg_ttl = ttl_sum/ttl_samples;
+
+                /* Do a simple running average with a few samples.
+                 * We just use the current estimate with a weight of 2%
+                 * and the previous estimate with a weight of 98%. */
+                if (db->avg_ttl == 0) db->avg_ttl = avg_ttl;
+                db->avg_ttl = (db->avg_ttl/50)*49 + (avg_ttl/50);
+            }
+
+            /* We can't block forever here even if there are many keys to
+             * expire. So after a given amount of milliseconds return to the
+             * caller waiting for the other active expire cycle. */
+            if ((iteration & 0xf) == 0) { /* check once every 16 iterations. */
+                elapsed = ustime()-start;
+                if (elapsed > timelimit) {
+                    timelimit_exit = 1;
+                    server.stat_expired_time_cap_reached_count++;
+                    break;
+                }
+            }
+        } while (sampled == 0 ||
+                 (expired*100/sampled) > config_cycle_acceptable_stale);
+    }
+
+    elapsed = ustime()-start;
+    server.stat_expire_cycle_time_used += elapsed;
+    latencyAddSampleIfNeeded("expire-cycle",elapsed/1000);
+
+    /* Update our estimate of keys existing but yet to be expired.
+     * Running average with this sample accounting for 5%. */
+    double current_perc;
+    if (total_sampled) {
+        current_perc = (double)total_expired/total_sampled;
+    } else
+        current_perc = 0;
+    server.stat_expired_stale_perc = (current_perc*0.05)+
+                                     (server.stat_expired_stale_perc*0.95);
 }
 ```
 
@@ -1347,7 +1771,7 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val,
 8.allkeys-lfu:从所有键中驱逐使用频率最少的键
 ```
 
-### LRU的原理
+### Redis的LRU和LFU
 
 ```c
 
