@@ -671,6 +671,8 @@ sds sdsnewlen(const void *init, size_t initlen) {
 
 ### 1-4. Bitops(位图)
 
+位图的存储是基于sds字符串，最大512M。
+
 #### setbit:
 
 ​	**SETBIT key offset value**
@@ -738,6 +740,154 @@ robj *lookupStringForBitCommand(client *c, size_t maxbit) {
     }
     return o;
 }
+```
+
+### 1-4.  intset (整数集合)
+
+​		intset中的contents[]里的元素有唯一性，encoding初始默认int8，当存储大的值时会进行编码升级16/32/64
+
+```C
+typedef struct intset {
+    uint32_t encoding; //编码方式
+    uint32_t length;	//集合的元素数量
+    int8_t contents[];	//// 保存元素的数组
+} intset;
+```
+
+####  intsetAdd 
+
+```C
+intset *intsetAdd(intset *is, int64_t value, uint8_t *success) {
+    // 新数值类型
+    uint8_t valenc = _intsetValueEncoding(value);
+    uint32_t pos;
+    if (success) *success = 1;
+	
+    //是否升级编码
+   // 如果新值类型大于原数据结构类型，则对结构进行升级操作，并插入数值
+    if (valenc > intrev32ifbe(is->encoding)) {
+      	//升级编码
+        return intsetUpgradeAndAdd(is,value);
+    } else {
+       	// 查找插入位置，因为 数组元素是 秉承从小到大的顺序排列的
+        if (intsetSearch(is,value,&pos)) {
+           	//若返回1表示查找到则不插入直接返回
+            if (success) *success = 0;
+            return is;
+        }
+		// 调整 数组大小
+        is = intsetResize(is,intrev32ifbe(is->length)+1);
+        // 如果插入位置在中间，移动 老数组元素的位置，因为 数组的插入一般都会造成 插入位置后 的数据移动
+        if (pos < intrev32ifbe(is->length)) intsetMoveTail(is,pos,pos+1);
+    }
+	// 插入新元素
+    _intsetSet(is,pos,value);
+    // 长度 ++
+    is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
+    return is;
+}
+```
+
+#### 编码升级：
+
+​		 intset 只存储整数，默认int8_t，当存入比int8大的值时会进行编码升级 
+
+```C
+static intset *intsetUpgradeAndAdd(intset *is, int64_t value) {
+    //当前的编码
+    uint8_t curenc = intrev32ifbe(is->encoding);
+    //要升级成的编码
+    uint8_t newenc = _intsetValueEncoding(value);
+    //intset的元素数量
+    int length = intrev32ifbe(is->length);
+    // 判断新数值如果小于0 则添加到 首部，否则添加到 尾部
+    int prepend = value < 0 ? 1 : 0;
+
+     // encoding 属性修改为 新的类型值
+    is->encoding = intrev32ifbe(newenc);
+     // 调整数组大小
+    is = intsetResize(is,intrev32ifbe(is->length)+1);
+
+    // 遍历数组，将数组元素重新放置到 新位置，不过这里采用的是 从后往前遍历的方式，放置数字元素的 相互覆盖
+    while(length--)
+        _intsetSet(is,length+prepend,_intsetGetEncoded(is,length,curenc));
+
+    // 根据上面的 正负值判断，新数值 插入 数组头 或者 数组尾
+    if (prepend)
+        _intsetSet(is,0,value);
+    else
+        _intsetSet(is,intrev32ifbe(is->length),value);
+    // 集合长度++
+    is->length = intrev32ifbe(intrev32ifbe(is->length)+1);
+    return is;
+}
+```
+
+###  intsetSearch（查找）:
+
+```c
+static uint8_t intsetSearch(intset *is, int64_t value, uint32_t *pos) {
+    //二分查找
+    int min = 0, max = intrev32ifbe(is->length)-1, mid = -1;
+    int64_t cur = -1;
+
+    //集合为空，直接返回
+    if (intrev32ifbe(is->length) == 0) {
+        if (pos) *pos = 0;
+        return 0;
+    } else {
+        //因为是有序的
+        // 如果大于数组最后一个值则位置为最后一个位置
+        if (value > _intsetGet(is,max)) {
+            if (pos) *pos = intrev32ifbe(is->length);
+            return 0;
+        } else if (value < _intsetGet(is,0)) {
+            //或者小于最后一位
+            if (pos) *pos = 0;
+            return 0;
+        }
+    }
+
+    // 二分查找法 遍历数组，对比值 大小，所以复杂度为 log n
+    while(max >= min) {
+        mid = ((unsigned int)min + (unsigned int)max) >> 1;
+        cur = _intsetGet(is,mid);
+        if (value > cur) {
+            min = mid+1;
+        } else if (value < cur) {
+            max = mid-1;
+        } else {
+            break;
+        }
+    }
+
+    if (value == cur) {
+        if (pos) *pos = mid;
+        return 1;
+    } else {
+        if (pos) *pos = min;
+        return 0;
+    }
+}
+```
+
+### 1-5. list (双端队列)
+
+```c
+typedef struct list {
+    listNode *head; //头结点
+    listNode *tail;	//尾节点
+    void *(*dup)(void *ptr); // 节点复制函数
+    void (*free)(void *ptr);	// 节点释放函数
+    int (*match)(void *ptr, void *key); // 节点对比函数
+    unsigned long len; // 节点数量
+} list;
+
+typedef struct listNode {
+    struct listNode *prev; //前置节点
+    struct listNode *next; //后置节点
+    void *value;	//当前节点值
+} listNode;
 ```
 
 
@@ -1280,6 +1430,7 @@ void activeExpireCycle(int type) {
 
                         //判断key是否过期
                         ttl = dictGetSignedIntegerVal(e)-now;
+                        //删除已经过期的key
                         if (activeExpireCycleTryExpire(db,e,now)) expired++;
                         if (ttl > 0) {
                             //没有过期
@@ -1299,17 +1450,13 @@ void activeExpireCycle(int type) {
             if (ttl_samples) {
                 long long avg_ttl = ttl_sum/ttl_samples;
 
-                /* Do a simple running average with a few samples.
-                 * We just use the current estimate with a weight of 2%
-                 * and the previous estimate with a weight of 98%. */
                 if (db->avg_ttl == 0) db->avg_ttl = avg_ttl;
                 db->avg_ttl = (db->avg_ttl/50)*49 + (avg_ttl/50);
             }
 
-            /* We can't block forever here even if there are many keys to
-             * expire. So after a given amount of milliseconds return to the
-             * caller waiting for the other active expire cycle. */
-            if ((iteration & 0xf) == 0) { /* check once every 16 iterations. */
+           	//不能一直阻塞删除，时间到了要退出
+            if ((iteration & 0xf) == 0) { 
+                //每16次迭代检查一次
                 elapsed = ustime()-start;
                 if (elapsed > timelimit) {
                     timelimit_exit = 1;
@@ -1325,8 +1472,6 @@ void activeExpireCycle(int type) {
     server.stat_expire_cycle_time_used += elapsed;
     latencyAddSampleIfNeeded("expire-cycle",elapsed/1000);
 
-    /* Update our estimate of keys existing but yet to be expired.
-     * Running average with this sample accounting for 5%. */
     double current_perc;
     if (total_sampled) {
         current_perc = (double)total_expired/total_sampled;
@@ -1334,6 +1479,30 @@ void activeExpireCycle(int type) {
         current_perc = 0;
     server.stat_expired_stale_perc = (current_perc*0.05)+
                                      (server.stat_expired_stale_perc*0.95);
+}
+
+int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now) {
+    //获取过期时间
+    long long t = dictGetSignedIntegerVal(de);
+    //若当前时间大于过期时间则删除key
+    if (now > t) {
+        sds key = dictGetKey(de);
+        robj *keyobj = createStringObject(key,sdslen(key));
+
+        propagateExpire(db,keyobj,server.lazyfree_lazy_expire);
+        if (server.lazyfree_lazy_expire)
+            dbAsyncDelete(db,keyobj);
+        else
+            dbSyncDelete(db,keyobj);
+        notifyKeyspaceEvent(NOTIFY_EXPIRED,
+            "expired",keyobj,db->id);
+        trackingInvalidateKey(NULL,keyobj);
+        decrRefCount(keyobj);
+        server.stat_expiredkeys++;
+        return 1;
+    } else {
+        return 0;
+    }
 }
 ```
 
@@ -1753,6 +1922,383 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val,
     if (expire) notifyKeyspaceEvent(NOTIFY_GENERIC,
         "expire",key,c->db->id);
     addReply(c, ok_reply ? ok_reply : shared.ok);
+}
+```
+
+## 3-3.Set类型
+
+```
+set类型的编码:
+	OBJ_ENCODING_INTSET
+	OBJ_ENCODING_HT
+
+默认存储为intset，当
+	1.集合对象保存的所有元素都是 整数
+	2.集合对象的元素个数不能大于server.set_max_intset_entries(默认512)
+```
+
+#### SADD:
+
+```c
+void saddCommand(client *c) {
+    robj *set;
+    int j, added = 0;
+	//获取redisObject对象
+    set = lookupKeyWrite(c->db,c->argv[1]);
+    if (set == NULL) {
+        //创建一个Set对象
+        set = setTypeCreate(c->argv[2]->ptr);
+        //db字典增加
+        dbAdd(c->db,c->argv[1],set);
+    } else {
+        //若类型不是OBJ_SET，类型错误
+        if (set->type != OBJ_SET) {
+            addReply(c,shared.wrongtypeerr);
+            return;
+        }
+    }
+
+    for (j = 2; j < c->argc; j++) {
+        //遍历添加value
+        if (setTypeAdd(set,c->argv[j]->ptr)) added++;
+    }
+    if (added) {
+        signalModifiedKey(c,c->db,c->argv[1]);
+        notifyKeyspaceEvent(NOTIFY_SET,"sadd",c->argv[1],c->db->id);
+    }
+    server.dirty += added;
+    addReplyLongLong(c,added);
+}
+
+robj *setTypeCreate(sds value) {
+    //判断value是否是数字
+    if (isSdsRepresentableAsLongLong(value,NULL) == C_OK)
+        //若是数字则创建intset
+        return createIntsetObject();
+    //否则为dict
+    return createSetObject();
+}
+
+int setTypeAdd(robj *subject, sds value) {
+    long long llval;
+    //若结构是dict，字典直接添加key，value为NULL
+    if (subject->encoding == OBJ_ENCODING_HT) {
+        dict *ht = subject->ptr;
+        dictEntry *de = dictAddRaw(ht,value,NULL);
+        if (de) {
+            dictSetKey(ht,de,sdsdup(value));
+            dictSetVal(ht,de,NULL);
+            return 1;
+        }
+    } else if (subject->encoding == OBJ_ENCODING_INTSET) {
+        //若是intset
+        //先判断是否是数字类型，若不是转化成dict
+        if (isSdsRepresentableAsLongLong(value,&llval) == C_OK) {
+            uint8_t success = 0;
+            //添加元素
+            subject->ptr = intsetAdd(subject->ptr,llval,&success);
+            //添加成功
+            if (success) {
+             	//判断intset元素大小是否大于set_max_intset_entries配置
+                if (intsetLen(subject->ptr) > server.set_max_intset_entries)
+                    //大于则转化成dict
+                    setTypeConvert(subject,OBJ_ENCODING_HT);
+                return 1;
+            }
+        } else {
+            //转化成dict
+            setTypeConvert(subject,OBJ_ENCODING_HT);
+			//添加元素
+            serverAssert(dictAdd(subject->ptr,sdsdup(value),NULL) == DICT_OK);
+            return 1;
+        }
+    } else {
+        serverPanic("Unknown set encoding");
+    }
+    return 0;
+}
+```
+
+#### intset转化dict：
+
+```c
+void setTypeConvert(robj *setobj, int enc) {
+    setTypeIterator *si;
+    // 判断类型是否为 intset
+    serverAssertWithInfo(NULL,setobj,setobj->type == OBJ_SET &&
+                             setobj->encoding == OBJ_ENCODING_INTSET);
+	//如果编码类型为 hashtable字典 类型
+    if (enc == OBJ_ENCODING_HT) {
+        int64_t intele;
+        //创建一个字典
+        dict *d = dictCreate(&setDictType,NULL);
+        sds element;
+
+        // 扩张 字典大小
+        dictExpand(d,intsetLen(setobj->ptr));
+
+        // 初始化 迭代器，遍历 intset，依次 将元素假如到 字典中
+        si = setTypeInitIterator(setobj);
+        while (setTypeNext(si,&element,&intele) != -1) {
+            // 整数转换为 字符串元素
+            element = sdsfromlonglong(intele);
+            // 添加到字典里
+            serverAssert(dictAdd(d,element,NULL) == DICT_OK);
+        }
+        // 释放迭代器
+        setTypeReleaseIterator(si);
+		// 设置编码类型
+        setobj->encoding = OBJ_ENCODING_HT;
+        // 释放 intset 结构
+        zfree(setobj->ptr);
+        // 重新指向
+        setobj->ptr = d;
+    } else {
+        serverPanic("Unsupported set conversion");
+    }
+}
+```
+
+#### SMEMBER:
+
+```c
+void sismemberCommand(client *c) {
+    robj *set;
+	//获取redisObject
+    if ((set = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
+        checkType(c,set,OBJ_SET)) return;
+	//获取值
+    if (setTypeIsMember(set,c->argv[2]->ptr))
+        addReply(c,shared.cone);
+    else
+        addReply(c,shared.czero);
+}
+
+int setTypeIsMember(robj *subject, sds value) {
+    long long llval;
+    //若是字典类型
+    if (subject->encoding == OBJ_ENCODING_HT) {
+        //则dictFind
+        return dictFind((dict*)subject->ptr,value) != NULL;
+    } else if (subject->encoding == OBJ_ENCODING_INTSET) {
+        //若是intset,并且值是数字类型（因为intset只存储数字类型）
+        if (isSdsRepresentableAsLongLong(value,&llval) == C_OK) {
+            return intsetFind((intset*)subject->ptr,llval);
+        }
+    } else {
+        serverPanic("Unknown set encoding");
+    }
+    return 0;
+}
+```
+
+### set支持集合操作（ sdiff、sdiffstore、sunion、sunionstore ）
+
+```C
+define SET_OP_UNION 0
+define SET_OP_DIFF 1
+define SET_OP_INTER 2
+
+//差集
+void sdiffCommand(client *c) {
+    sunionDiffGenericCommand(c,c->argv+1,c->argc-1,NULL,SET_OP_DIFF);
+}
+
+//差集并存储到新的key
+void sdiffstoreCommand(client *c) {
+    sunionDiffGenericCommand(c,c->argv+2,c->argc-2,c->argv[1],SET_OP_DIFF);
+}
+
+//并集
+void sunionCommand(client *c) {
+    sunionDiffGenericCommand(c,c->argv+1,c->argc-1,NULL,SET_OP_UNION);
+}
+
+//并集并存储到新的key
+void sunionstoreCommand(client *c) {
+    sunionDiffGenericCommand(c,c->argv+2,c->argc-2,c->argv[1],SET_OP_UNION);
+}
+
+//交集
+/**
+	交集算法，选择最小的集合， 遍历其他集合，
+	将该集合中的所有元素和其他集合作比较，如果至少有一个集合不包括该元素，
+	则该元素不属于交集
+**/
+void sinterCommand(client *c) {
+    sinterGenericCommand(c,c->argv+1,c->argc-1,NULL);
+}
+
+//交集并存储到新的key
+void sinterstoreCommand(client *c) {
+    sinterGenericCommand(c,c->argv+2,c->argc-2,c->argv[1]);
+}
+
+void sunionDiffGenericCommand(client *c, robj **setkeys, int setnum,
+                              robj *dstkey, int op) {
+    // 申请集合空间，setnum:集合的数量
+    robj **sets = zmalloc(sizeof(robj*)*setnum);
+    // set 遍历迭代器
+    setTypeIterator *si;
+    robj *dstset = NULL;
+    sds ele;
+    int j, cardinality = 0;
+    int diff_algo = 1;
+	// 遍历每一个需要对比的集合，放入 集合数组中，方便后续运算使用
+    for (j = 0; j < setnum; j++) {
+        //查找key的对象，lookupKeyWrite：过期检查 和 命中刷的统计
+        //lookupKeyRead：过期检查
+        robj *setobj = dstkey ?
+            lookupKeyWrite(c->db,setkeys[j]) :
+            lookupKeyRead(c->db,setkeys[j]);
+        // 如果集合不存在，则做 NULL 处理
+        if (!setobj) {
+            sets[j] = NULL;
+            continue;
+        }
+        // 判断对象类型，如果对象不是集合则停止执行，并清理集合数组
+        if (checkType(c,setobj,OBJ_SET)) {
+            zfree(sets);
+            return;
+        }
+        sets[j] = setobj;
+    }
+
+  	//若是差集操作
+    if (op == SET_OP_DIFF && sets[0]) {
+        long long algo_one_work = 0, algo_two_work = 0;
+
+        for (j = 0; j < setnum; j++) {
+            if (sets[j] == NULL) continue;
+
+            algo_one_work += setTypeSize(sets[0]);
+            algo_two_work += setTypeSize(sets[j]);
+        }
+
+      	//计算使用哪种差集算法
+        algo_one_work /= 2;
+        diff_algo = (algo_one_work <= algo_two_work) ? 1 : 2;
+
+        if (diff_algo == 1 && setnum > 1) {
+            //按集合元素个数从多到少排序，可以更快的找到元素
+            qsort(sets+1,setnum-1,sizeof(robj*),
+                qsortCompareSetsByRevCardinality);
+        }
+    }
+
+   	//创建一个新的集合
+    dstset = createIntsetObject();
+
+    if (op == SET_OP_UNION) {
+       	//并集操作
+        // 将每个元素添加至 tmp 集合中
+        for (j = 0; j < setnum; j++) {
+            // 跳过空集
+            if (!sets[j]) continue; 
+
+            si = setTypeInitIterator(sets[j]);
+            // 遍历集合，直接把元素加入到结果集
+            while((ele = setTypeNextObject(si)) != NULL) {
+                if (setTypeAdd(dstset,ele)) cardinality++;
+                sdsfree(ele);
+            }
+            setTypeReleaseIterator(si);
+        }
+    } else if (op == SET_OP_DIFF && sets[0] && diff_algo == 1) {
+       	/**
+      	第一种差集算法(复杂度为 O(n*m))：
+      	对第一个集合进行遍历，对于它的每一个元素，
+      	依次在后面的所有集合中进行查找。
+     	只有在所有集合中都找不到的元素，才加入到最后的结果集合中
+     	**/
+        // 程序遍历集合set[0]中的所有元素，并将这个元素和其他集合中的所有元素进行对比，只有这个元素不存在于其他集合时，才会将它添加到结果集中
+        si = setTypeInitIterator(sets[0]);
+        while((ele = setTypeNextObject(si)) != NULL) {
+            //遍历所有集合
+            for (j = 1; j < setnum; j++) {
+                //跳过空集合
+                if (!sets[j]) continue;
+                // 相同集合跳过
+                if (sets[j] == sets[0]) break; 
+                // 对比元素是否在 j集合里
+                if (setTypeIsMember(sets[j],ele)) break;
+            }
+            if (j == setnum) {
+                // 如果元素不存在其他任何集合中，添加到结果集
+                setTypeAdd(dstset,ele);
+                cardinality++;
+            }
+            sdsfree(ele);
+        }
+        setTypeReleaseIterator(si);
+    } else if (op == SET_OP_DIFF && sets[0] && diff_algo == 2) {
+        /* 第二种差集算法
+         *
+         * 将第一个集合的所有元素都加入到一个中间集合中
+         * 遍历后面所有的集合，对于碰到的每一个元素
+         *
+         * 从中间集合中删掉它，最后中间集合剩下的元素就构成了差集
+         * */
+        for (j = 0; j < setnum; j++) {
+            //跳过空集合
+            if (!sets[j]) continue;
+
+            si = setTypeInitIterator(sets[j]);
+            while((ele = setTypeNextObject(si)) != NULL) {
+                if (j == 0) {
+                     // 将set[0]添加到结果集
+                    if (setTypeAdd(dstset,ele)) cardinality++;
+                } else {
+                     // 将相同的元素从结果集中移除
+                    if (setTypeRemove(dstset,ele)) cardinality--;
+                }
+                sdsfree(ele);
+            }
+            setTypeReleaseIterator(si);
+
+            // 如果结果集是空的话就退出，因为set[0]中的元素都出现到其他集合中了
+            if (cardinality == 0) break;
+        }
+    }
+
+    // 输出结果集合
+    if (!dstkey) {
+        // 直接输出集合
+        addReplySetLen(c,cardinality);
+        si = setTypeInitIterator(dstset);
+        // 遍历并返回结果集合dstset中所有的元素
+        while((ele = setTypeNextObject(si)) != NULL) {
+            addReplyBulkCBuffer(c,ele,sdslen(ele));
+            sdsfree(ele);
+        }
+        setTypeReleaseIterator(si);
+        server.lazyfree_lazy_server_del ? freeObjAsync(dstset) :
+                                          decrRefCount(dstset);
+    } else {
+        // 转储结果集
+        // 删除原本库里面的 dstkey
+        int deleted = dbDelete(c->db,dstkey);
+        if (setTypeSize(dstset) > 0) {
+            // 转储到目的 key
+            dbAdd(c->db,dstkey,dstset);
+            addReplyLongLong(c,setTypeSize(dstset));
+            notifyKeyspaceEvent(NOTIFY_SET,
+                op == SET_OP_UNION ? "sunionstore" : "sdiffstore",
+                dstkey,c->db->id);
+        } else {
+            // 如果结果集合为空，删除
+            decrRefCount(dstset);
+            addReply(c,shared.czero);
+            if (deleted)
+                 // 发送事件通知
+                notifyKeyspaceEvent(NOTIFY_GENERIC,"del",
+                    dstkey,c->db->id);
+        }
+         // 发送消息
+        signalModifiedKey(c,c->db,dstkey);
+        server.dirty++;
+    }
+    zfree(sets);
 }
 ```
 
