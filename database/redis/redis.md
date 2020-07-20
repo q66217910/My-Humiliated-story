@@ -740,6 +740,343 @@ robj *lookupStringForBitCommand(client *c, size_t maxbit) {
 }
 ```
 
+#### 
+
+#### listCreate(双端队列创建):
+
+```c
+list *listCreate(void)
+{
+    struct list *list;
+	//分配内存
+    if ((list = zmalloc(sizeof(*list))) == NULL)
+        return NULL;
+    //自己头节点指向尾节点
+    list->head = list->tail = NULL;
+    list->len = 0;
+    list->dup = NULL;
+    list->free = NULL;
+    list->match = NULL;
+    return list;
+}
+```
+
+#### 双端队列插入：
+
+```C
+//头节点插入
+list *listAddNodeHead(list *list, void *value){
+    listNode *node;
+
+    if ((node = zmalloc(sizeof(*node))) == NULL)
+        return NULL;
+    node->value = value;
+    if (list->len == 0) {
+        list->head = list->tail = node;
+        node->prev = node->next = NULL;
+    } else {
+        node->prev = NULL;
+        node->next = list->head;
+        list->head->prev = node;
+        list->head = node;
+    }
+    list->len++;
+    return list;
+}
+
+//尾节点插入
+list *listAddNodeTail(list *list, void *value){
+    listNode *node;
+
+    if ((node = zmalloc(sizeof(*node))) == NULL)
+        return NULL;
+    node->value = value;
+    if (list->len == 0) {
+        list->head = list->tail = node;
+        node->prev = node->next = NULL;
+    } else {
+        node->prev = list->tail;
+        node->next = NULL;
+        list->tail->next = node;
+        list->tail = node;
+    }
+    list->len++;
+    return list;
+}
+
+//灵活插入法
+list *listInsertNode(list *list, listNode *old_node, void *value, int after) {
+    listNode *node;
+
+    if ((node = zmalloc(sizeof(*node))) == NULL)
+        return NULL;
+    node->value = value;
+    if (after) {
+        node->prev = old_node;
+        node->next = old_node->next;
+        if (list->tail == old_node) {
+            list->tail = node;
+        }
+    } else {
+        node->next = old_node;
+        node->prev = old_node->prev;
+        if (list->head == old_node) {
+            list->head = node;
+        }
+    }
+    if (node->prev != NULL) {
+        node->prev->next = node;
+    }
+    if (node->next != NULL) {
+        node->next->prev = node;
+    }
+    list->len++;
+    return list;
+}
+```
+
+#### 双端队列查找：
+
+```c
+listNode *listSearchKey(list *list, void *key){
+    listIter iter;
+    listNode *node;
+
+    listRewind(list, &iter);
+    while((node = listNext(&iter)) != NULL) {
+        //是否有实现match方法
+        if (list->match) {
+            //调用match去匹配
+            if (list->match(node->value, key)) {
+                return node;
+            }
+        } else {
+            //没有实现match方法，直接判断key是否匹配
+            if (key == node->value) {
+                return node;
+            }
+        }
+    }
+    return NULL;
+}
+```
+
+### 1-6.quicklist(快速列表)
+
+```
+quicklist:
+	list+ziplist(双端队列value存储ziplist)
+	
+	list-max-ziplist-size配置:ziplist的大小，默认-2
+		-1 每个链表节点上 的 压缩列表大小 <= 4KB
+		-2 每个链表节点上 的 压缩列表大小 <= 8KB
+		-3 每个链表节点上 的 压缩列表大小 <= 16KB
+		-4 每个链表节点上 的 压缩列表大小 <= 32KB
+		-5 每个链表节点上 的 压缩列表大小 <= 64KB
+		>0，代表限定的 每个链表节点上 存储的 最大 压缩列表 长度
+		
+	list-compress-depth:
+		双端队列两端节点压缩个数，LZF (无损压缩算法)
+```
+
+```c
+typedef struct quicklistNode {
+    struct quicklistNode *prev; // 上一个节点地址
+    struct quicklistNode *next; // 下一个节点地址
+    unsigned char *zl;  //压缩列表ziplist若已经压缩则是quicklistLZF 
+    unsigned int sz;    // 数据指向的 压缩列表 大小
+    unsigned int count : 16;     // 压缩列表里面的 元素个数
+    unsigned int encoding : 2;   //2表示被压缩了（而且用的是LZF压缩算法），1表示没有压缩
+    unsigned int container : 2;  //用来表明一个节点下面是直接存数据，还是使用压缩列表存数据
+    unsigned int recompress : 1; //标记等有机会再把数据重新压缩
+    unsigned int attempted_compress : 1; //自动化测试程序相关
+    unsigned int extra : 10;  // 扩展字段
+} quicklistNode;
+
+// 压缩后 的 压缩列表 结构
+typedef struct quicklistLZF {
+    unsigned int sz; // 压缩后的压缩列表大小
+    char compressed[];  // 柔性数组，存放压缩后的压缩列表元素数组
+} quicklistLZF;
+
+typedef struct quicklist {
+    quicklistNode *head;	//头节点
+    quicklistNode *tail;	//未节点
+    unsigned long count;    //总元素个数
+    unsigned long len;      //list节点个数
+    int fill : QL_FILL_BITS;  // 存放 list-max-ziplist-size 参数值
+    unsigned int compress : QL_COMP_BITS;  // 存放 list-compress-depth 参数值
+    unsigned int bookmark_count: QL_BM_BITS;
+    quicklistBookmark bookmarks[];
+} quicklist;
+```
+
+#### quicklistCreate（快速列表创建）:
+
+```c
+quicklist *quicklistCreate(void) {
+    struct quicklist *quicklist;
+    quicklist = zmalloc(sizeof(*quicklist));
+    quicklist->head = quicklist->tail = NULL;
+    quicklist->len = 0;
+    quicklist->count = 0;
+    quicklist->compress = 0;
+    quicklist->fill = -2;
+    quicklist->bookmark_count = 0;
+    return quicklist;
+}
+
+REDIS_STATIC quicklistNode *quicklistCreateNode(void) {
+    quicklistNode *node;
+    node = zmalloc(sizeof(*node));
+    node->zl = NULL;
+    node->count = 0;
+    node->sz = 0;
+    node->next = node->prev = NULL;
+    node->encoding = QUICKLIST_NODE_ENCODING_RAW;
+    node->container = QUICKLIST_NODE_CONTAINER_ZIPLIST;
+    node->recompress = 0;
+    return node;
+}
+```
+
+#### quicklist插入:
+
+```c
+//从头部插入
+int quicklistPushHead(quicklist *quicklist, void *value, size_t sz) {
+    quicklistNode *orig_head = quicklist->head;
+     // 节点没有满发生的概率比较大，也就是数据项直接插入到当前节点的可能性大
+    // 判断该头部节点是否允许插入，计算头部节点中的大小和fill参数设置的大小相比较
+    if (likely(_quicklistNodeAllowInsert(quicklist->head, quicklist->fill, sz))) {
+        // 执行到此，说明允许插入，直接调用ziplistpush插入节点即可
+        quicklist->head->zl =ziplistPush(quicklist->head->zl, value, sz, ZIPLIST_HEAD);
+        // 更新头部大小
+        quicklistNodeUpdateSz(quicklist->head);
+    } else {
+        // 执行到此，说明头部节点已经满了，需要重新创建一个节点
+        quicklistNode *node = quicklistCreateNode();
+        // 将新节点压入新创建的ziplist中，并与新创建的quicklist节点关联起来
+        node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD);
+		// 更新大小
+        quicklistNodeUpdateSz(node);
+        // 将新创建的quicklist节点关联到quicklist中
+        _quicklistInsertNodeBefore(quicklist, quicklist->head, node);
+    }
+    // 更新total数据项个数
+    quicklist->count++;
+    // 更新头结点的数据项个数
+    quicklist->head->count++;
+    // 如果尾部quicklist节点指针没变，返回0，反之返回1
+    return (orig_head != quicklist->head);
+}
+
+//从尾节点插入
+int quicklistPushTail(quicklist *quicklist, void *value, size_t sz) {
+    quicklistNode *orig_tail = quicklist->tail;
+    // 判断该尾部节点是否允许插入，计算头部节点中的大小和fill参数设置的大小相比较
+    if (likely(_quicklistNodeAllowInsert(quicklist->tail, quicklist->fill, sz))) {
+        // 执行到此，说明允许插入，直接调用ziplistpush插入节点即可，将新数据项push到ziplist的尾部
+        quicklist->tail->zl =ziplistPush(quicklist->tail->zl, value, sz, ZIPLIST_TAIL);
+        // 更新尾部节点大小
+        quicklistNodeUpdateSz(quicklist->tail);
+    } else {
+        // 执行到此，说明尾部节点已经满了，需要重新创建一个节点
+        quicklistNode *node = quicklistCreateNode();
+        // 创建一个新的ziplist，并将新数据项插入，然后与新创建的quicklist节点关联起来
+        node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_TAIL);
+		// 更新该quicklist节点的大小
+        quicklistNodeUpdateSz(node);
+        // 将新创建的quicklist与quicklist关联起来
+        _quicklistInsertNodeAfter(quicklist, quicklist->tail, node);
+    }
+    quicklist->count++;
+    quicklist->tail->count++;
+    return (orig_tail != quicklist->tail);
+}
+```
+
+#### quicklistPop:
+
+```c
+int quicklistPop(quicklist *quicklist, int where, unsigned char **data,
+                 unsigned int *sz, long long *slong) {
+    unsigned char *vstr;
+    unsigned int vlen;
+    long long vlong;
+    //列表元素为0
+    if (quicklist->count == 0)
+        return 0;
+    // 调用底层实现函数，传入的 _quicklistSaver是一个函数指针，用于深拷贝节点的值
+    int ret = quicklistPopCustom(quicklist, where, &vstr, &vlen, &vlong,_quicklistSaver);
+    // 给data，sz，slong赋值
+    if (data)
+        *data = vstr;
+    if (slong)
+        *slong = vlong;
+    if (sz)
+        *sz = vlen;
+    return ret;
+}
+
+int quicklistPopCustom(quicklist *quicklist, int where, unsigned char **data,
+                       unsigned int *sz, long long *sval,
+                       void *(*saver)(unsigned char *data, unsigned int sz)) {
+    unsigned char *p;
+    unsigned char *vstr;
+    unsigned int vlen;
+    long long vlong;
+    // 判断弹出位置，首部或者尾部
+    int pos = (where == QUICKLIST_HEAD) ? 0 : -1;
+
+    if (quicklist->count == 0)
+        return 0;
+
+    if (data)
+        *data = NULL;
+    if (sz)
+        *sz = 0;
+    if (sval)
+        *sval = -123456789;
+
+    // 获取quicklist节点
+    quicklistNode *node;
+    if (where == QUICKLIST_HEAD && quicklist->head) {
+        node = quicklist->head;
+    } else if (where == QUICKLIST_TAIL && quicklist->tail) {
+        node = quicklist->tail;
+    } else {
+        return 0;
+    }
+
+    // 获取ziplist中的节点
+    p = ziplistIndex(node->zl, pos);
+    // 获取该节点的值
+    if (ziplistGet(p, &vstr, &vlen, &vlong)) {
+         // 如果是字符串值
+        if (vstr) {
+            if (data)
+                // _quicklistSaver函数用于深拷贝取出返回值
+                *data = saver(vstr, vlen);
+            if (sz)
+                // 字符串的长度
+                *sz = vlen;
+        } else {
+             // 如果存放的是整型值
+            if (data)
+                *data = NULL;
+            if (sval)
+                // 弹出节点的整型值
+                *sval = vlong;
+        }
+        // 删除该节点
+        quicklistDelIndex(quicklist, node, &p);
+        return 1;
+    }
+    return 0;
+}
+```
+
 
 
 ## 2.Redis数据库
@@ -1753,6 +2090,152 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val,
     if (expire) notifyKeyspaceEvent(NOTIFY_GENERIC,
         "expire",key,c->db->id);
     addReply(c, ok_reply ? ok_reply : shared.ok);
+}
+```
+
+### 3-4. List类型
+
+```
+
+```
+
+#### list插入：
+
+```c
+define LIST_HEAD 0
+define LIST_TAIL 1
+
+//头插入
+void lpushCommand(client *c) {
+    pushGenericCommand(c,LIST_HEAD);
+}
+
+//尾插入
+void rpushCommand(client *c) {
+    pushGenericCommand(c,LIST_TAIL);
+}
+
+//灵活插入
+void linsertCommand(client *c) {
+    int where;
+    robj *subject;
+    listTypeIterator *iter;
+    listTypeEntry entry;
+    int inserted = 0;
+
+    if (strcasecmp(c->argv[2]->ptr,"after") == 0) {
+        where = LIST_TAIL;
+    } else if (strcasecmp(c->argv[2]->ptr,"before") == 0) {
+        where = LIST_HEAD;
+    } else {
+        addReply(c,shared.syntaxerr);
+        return;
+    }
+
+    if ((subject = lookupKeyWriteOrReply(c,c->argv[1],shared.czero)) == NULL ||
+        checkType(c,subject,OBJ_LIST)) return;
+
+    iter = listTypeInitIterator(subject,0,LIST_TAIL);
+    while (listTypeNext(iter,&entry)) {
+        if (listTypeEqual(&entry,c->argv[3])) {
+            listTypeInsert(&entry,c->argv[4],where);
+            inserted = 1;
+            break;
+        }
+    }
+    listTypeReleaseIterator(iter);
+
+    if (inserted) {
+        signalModifiedKey(c,c->db,c->argv[1]);
+        notifyKeyspaceEvent(NOTIFY_LIST,"linsert",
+                            c->argv[1],c->db->id);
+        server.dirty++;
+    } else {
+        addReplyLongLong(c,-1);
+        return;
+    }
+
+    addReplyLongLong(c,listTypeLength(subject));
+}
+
+void pushGenericCommand(client *c, int where) {
+    int j, pushed = 0;
+    //查询RedisObject
+    robj *lobj = lookupKeyWrite(c->db,c->argv[1]);
+	//判断类型OBJ_LIST
+    if (lobj && lobj->type != OBJ_LIST) {
+        addReply(c,shared.wrongtypeerr);
+        return;
+    }
+
+    for (j = 2; j < c->argc; j++) {
+        //key不存在
+        if (!lobj) {
+            //创建一个 快速列表对象
+            lobj = createQuicklistObject();
+            //设置快速列表的信息
+            quicklistSetOptions(lobj->ptr, server.list_max_ziplist_size,
+                                server.list_compress_depth);
+            //添加key
+            dbAdd(c->db,c->argv[1],lobj);
+        }
+        //push元素
+        listTypePush(lobj,c->argv[j],where);
+        pushed++;
+    }
+    addReplyLongLong(c, (lobj ? listTypeLength(lobj) : 0));
+    if (pushed) {
+        //若添加成功
+        char *event = (where == LIST_HEAD) ? "lpush" : "rpush";
+		//推送通知
+        signalModifiedKey(c,c->db,c->argv[1]);
+        notifyKeyspaceEvent(NOTIFY_LIST,event,c->argv[1],c->db->id);
+    }
+    server.dirty += pushed;
+}
+
+void listTypePush(robj *subject, robj *value, int where) {
+    if (subject->encoding == OBJ_ENCODING_QUICKLIST) {
+        //结构是快速列表
+        //判断是头节点插入还是尾节点插入
+        int pos = (where == LIST_HEAD) ? QUICKLIST_HEAD : QUICKLIST_TAIL;
+        //解码
+        value = getDecodedObject(value);
+        //字符的长度
+        size_t len = sdslen(value->ptr);
+        //添加到快速列表
+        quicklistPush(subject->ptr, value->ptr, len, pos);
+        decrRefCount(value);
+    } else {
+        serverPanic("Unknown list encoding");
+    }
+}
+
+void quicklistSetOptions(quicklist *quicklist, int fill, int depth) {
+    quicklistSetFill(quicklist, fill);
+    quicklistSetCompressDepth(quicklist, depth);
+}
+
+//判断ziplist节点的大小
+define FILL_MAX ((1 << (QL_FILL_BITS-1))-1)
+void quicklistSetFill(quicklist *quicklist, int fill) {
+    if (fill > FILL_MAX) {
+        fill = FILL_MAX;
+    } else if (fill < -5) {
+        fill = -5;
+    }
+    quicklist->fill = fill;
+}
+
+//判罚节点是否要压缩
+define COMPRESS_MAX ((1 << QL_COMP_BITS)-1)
+void quicklistSetCompressDepth(quicklist *quicklist, int compress) {
+    if (compress > COMPRESS_MAX) {
+        compress = COMPRESS_MAX;
+    } else if (compress < 0) {
+        compress = 0;
+    }
+    quicklist->compress = compress;
 }
 ```
 
