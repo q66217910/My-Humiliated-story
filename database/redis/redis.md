@@ -1276,13 +1276,151 @@ zskiplistNode *zslCreateNode(int level, double score, sds ele) {
     zn->ele = ele;
     return zn;
 }
+
+typedef struct {
+    double min, max; //区间
+    int minex, maxex; //开闭区间
+} zrangespec;
 ```
 
 #### 跳跃表的插入:
 
 ```c
+define ZADD_NONE 0
+define ZADD_INCR (1<<0)    //增加分值
+define ZADD_NX (1<<1)     //只添加不存在的元素
+define ZADD_XX (1<<2)     //只修改已存在的元素
+define ZADD_CH (1<<16)    //返回新增或者更新数
+//添加元素
 void zaddCommand(client *c) {
     zaddGenericCommand(c,ZADD_NONE);
+}
+
+//增加分值
+void zincrbyCommand(client *c) {
+    zaddGenericCommand(c,ZADD_INCR);
+}
+
+void zaddGenericCommand(client *c, int flags) {
+    static char *nanerr = "resulting score is not a number (NaN)";
+    robj *key = c->argv[1];
+    robj *zobj;
+    sds ele;
+    double score = 0, *scores = NULL;
+    int j, elements;
+    int scoreidx = 0;
+   
+    int added = 0;     //新增元素的数量
+    int updated = 0;    //更新元素的数量
+    int processed = 0;  //处理元素的数量
+
+    //查看指令
+    scoreidx = 2;
+    while(scoreidx < c->argc) {
+        char *opt = c->argv[scoreidx]->ptr;
+        if (!strcasecmp(opt,"nx")) flags |= ZADD_NX;
+        else if (!strcasecmp(opt,"xx")) flags |= ZADD_XX;
+        else if (!strcasecmp(opt,"ch")) flags |= ZADD_CH;
+        else if (!strcasecmp(opt,"incr")) flags |= ZADD_INCR;
+        else break;
+        scoreidx++;
+    }
+
+    /* Turn options into simple to check vars. */
+    int incr = (flags & ZADD_INCR) != 0;
+    int nx = (flags & ZADD_NX) != 0;
+    int xx = (flags & ZADD_XX) != 0;
+    int ch = (flags & ZADD_CH) != 0;
+
+    //判断参数个数，偶数个
+    elements = c->argc-scoreidx;
+    if (elements % 2 || !elements) {
+        addReply(c,shared.syntaxerr);
+        return;
+    }
+    elements /= 2;
+
+  	//nx与xx不兼容
+    if (nx && xx) {
+        addReplyError(c,
+            "XX and NX options at the same time are not compatible");
+        return;
+    }
+
+    //inrc与elements不兼容
+    if (incr && elements > 1) {
+        addReplyError(c,
+            "INCR option supports a single increment-element pair");
+        return;
+    }
+	
+    //解析所有sroce
+    scores = zmalloc(sizeof(double)*elements);
+    for (j = 0; j < elements; j++) {
+        if (getDoubleFromObjectOrReply(c,c->argv[scoreidx+j*2],&scores[j],NULL)
+            != C_OK) goto cleanup;
+    }
+
+   	//查找redisObject
+    zobj = lookupKeyWrite(c->db,key);
+    if (zobj == NULL) {
+        //key不存在,若是xx类型
+        if (xx) goto reply_to_client;
+        //判断zset_max_ziplist_entries，ziplist的数量
+        if (server.zset_max_ziplist_entries == 0 ||
+            server.zset_max_ziplist_value < sdslen(c->argv[scoreidx+1]->ptr)){
+            //直接创建跳跃表
+            zobj = createZsetObject();
+        } else {
+            //创建ziplist
+            zobj = createZsetZiplistObject();
+        }
+        dbAdd(c->db,key,zobj);
+    } else {
+        //key已经存在
+        if (zobj->type != OBJ_ZSET) {
+            addReply(c,shared.wrongtypeerr);
+            goto cleanup;
+        }
+    }
+
+    //遍历元素
+    for (j = 0; j < elements; j++) {
+        double newscore;
+        score = scores[j];
+        int retflags = flags;
+
+        ele = c->argv[scoreidx+1+j*2]->ptr;
+        //添加元素
+        int retval = zsetAdd(zobj, score, ele, &retflags, &newscore);
+        if (retval == 0) {
+            addReplyError(c,nanerr);
+            goto cleanup;
+        }
+        if (retflags & ZADD_ADDED) added++;
+        if (retflags & ZADD_UPDATED) updated++;
+        if (!(retflags & ZADD_NOP)) processed++;
+        score = newscore;
+    }
+    server.dirty += (added+updated);
+
+reply_to_client:
+    if (incr) { 
+        if (processed)
+            addReplyDouble(c,score);
+        else
+            addReplyNull(c);
+    } else { 
+        addReplyLongLong(c,ch ? added+updated : added);
+    }
+
+cleanup:
+    zfree(scores);
+    if (added || updated) {
+        signalModifiedKey(c,c->db,key);
+        notifyKeyspaceEvent(NOTIFY_ZSET,
+            incr ? "zincr" : "zadd", key, c->db->id);
+    }
 }
 
 zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
@@ -1294,23 +1432,25 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     // level 表头地址
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
-        /* store rank that is crossed to reach the insert position */
+        // 初始化写入位置，也代表 写入位置距离当前距离
         rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
+        //前置指针的值比当前值小，或者，值相等时看元素长度
         while (x->level[i].forward &&
                 (x->level[i].forward->score < score ||
                     (x->level[i].forward->score == score &&
-                    sdscmp(x->level[i].forward->ele,ele) < 0)))
-        {
+                    sdscmp(x->level[i].forward->ele,ele) < 0))){
             rank[i] += x->level[i].span;
             x = x->level[i].forward;
         }
+        // 最近的前方节点
         update[i] = x;
     }
-    /* we assume the element is not already inside, since we allow duplicated
-     * scores, reinserting the same element should never happen since the
-     * caller of zslInsert() should test in the hash table if the element is
-     * already inside or not. */
+    
+     //一个 zset 里面不可能有相同 元素存在，因为已经使用 hash 判断过了，但是可能存在 score 相同的元素
+    // 给元素随机 level 层数，提拔的概率是随机的，当然肯定是 0 ~ 31 范围内	
     level = zslRandomLevel();
+    //若提升的层数大于跳跃表的最大层数
+    //需要从 header 表头进行添加 forward，而且要更新 span 跳跃距离
     if (level > zsl->level) {
         for (i = zsl->level; i < level; i++) {
             rank[i] = 0;
@@ -1319,28 +1459,89 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
         }
         zsl->level = level;
     }
+    //创建跳跃表节点
     x = zslCreateNode(level,score,ele);
+    //新增节点每层都要设置该节点的forward和span
     for (i = 0; i < level; i++) {
         x->level[i].forward = update[i]->level[i].forward;
         update[i]->level[i].forward = x;
 
-        /* update span covered by update[i] as x is inserted here */
+        // 更新插入点的 跳跃距离 span
         x->level[i].span = update[i]->level[i].span - (rank[0] - rank[i]);
+        // 更新插入点前一个节点的 跳跃距离 span
         update[i]->level[i].span = (rank[0] - rank[i]) + 1;
     }
 
-    /* increment span for untouched levels */
+   // 增加高层的每层中 插入点前一个元素的 跳跃距离span
     for (i = level; i < zsl->level; i++) {
         update[i]->level[i].span++;
     }
 
+    // 设置后置 backward 元素地址
     x->backward = (update[0] == zsl->header) ? NULL : update[0];
+    // 如果 新增的节点 level[0] 的 forward 存在，则设置 下一个元素的  后置地址backward 为新节点
+    // 否则代表 新增的节点 为最后一个元素，则吧 跳跃表的 tail 地址指过来
     if (x->level[0].forward)
         x->level[0].forward->backward = x;
     else
         zsl->tail = x;
+    // 新增跳跃表长度
     zsl->length++;
     return x;
+}
+```
+
+#### 跳跃表查找：
+
+```c
+//获取给定范围的值的第一个节点
+zskiplistNode *zslFirstInRange(zskiplist *zsl, zrangespec *range) {
+    zskiplistNode *x;
+    int i;
+
+     // 判断给定的区间是否符合 跳跃表 最大最小分值范围区间
+    if (!zslIsInRange(zsl,range)) return NULL;
+
+    x = zsl->header;
+    // 从 header表头中 遍历每个 level 层，从最高层开始
+    for (i = zsl->level-1; i >= 0; i--) {
+        // 根据 forward 属性往后遍历 每个 score 是否符合条件，找到最近的前一个节点
+        while (x->level[i].forward &&
+            !zslValueGteMin(x->level[i].forward->score,range))
+                x = x->level[i].forward;
+    }
+
+    // 获取目标节点
+    x = x->level[0].forward;
+    serverAssert(x != NULL);
+
+     // 为了谨慎起见，再判断一下目标节点值是否会大于区间最大值
+    if (!zslValueLteMax(x->score,range)) return NULL;
+    return x;
+}
+
+int zslIsInRange(zskiplist *zsl, zrangespec *range) {
+    zskiplistNode *x;
+
+    //值不能小于最小值和大于最大值
+    if (range->min > range->max ||
+            (range->min == range->max && (range->minex || range->maxex)))
+        return 0;
+    x = zsl->tail;
+    if (x == NULL || !zslValueGteMin(x->score,range))
+        return 0;
+    x = zsl->header->level[0].forward;
+    if (x == NULL || !zslValueLteMax(x->score,range))
+        return 0;
+    return 1;
+}
+
+int zslValueGteMin(double value, zrangespec *spec) {
+    return spec->minex ? (value > spec->min) : (value >= spec->min);
+}
+
+int zslValueLteMax(double value, zrangespec *spec) {
+    return spec->maxex ? (value < spec->max) : (value <= spec->max);
 }
 ```
 
