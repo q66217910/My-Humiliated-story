@@ -1286,143 +1286,6 @@ typedef struct {
 #### 跳跃表的插入:
 
 ```c
-define ZADD_NONE 0
-define ZADD_INCR (1<<0)    //增加分值
-define ZADD_NX (1<<1)     //只添加不存在的元素
-define ZADD_XX (1<<2)     //只修改已存在的元素
-define ZADD_CH (1<<16)    //返回新增或者更新数
-//添加元素
-void zaddCommand(client *c) {
-    zaddGenericCommand(c,ZADD_NONE);
-}
-
-//增加分值
-void zincrbyCommand(client *c) {
-    zaddGenericCommand(c,ZADD_INCR);
-}
-
-void zaddGenericCommand(client *c, int flags) {
-    static char *nanerr = "resulting score is not a number (NaN)";
-    robj *key = c->argv[1];
-    robj *zobj;
-    sds ele;
-    double score = 0, *scores = NULL;
-    int j, elements;
-    int scoreidx = 0;
-   
-    int added = 0;     //新增元素的数量
-    int updated = 0;    //更新元素的数量
-    int processed = 0;  //处理元素的数量
-
-    //查看指令
-    scoreidx = 2;
-    while(scoreidx < c->argc) {
-        char *opt = c->argv[scoreidx]->ptr;
-        if (!strcasecmp(opt,"nx")) flags |= ZADD_NX;
-        else if (!strcasecmp(opt,"xx")) flags |= ZADD_XX;
-        else if (!strcasecmp(opt,"ch")) flags |= ZADD_CH;
-        else if (!strcasecmp(opt,"incr")) flags |= ZADD_INCR;
-        else break;
-        scoreidx++;
-    }
-
-    /* Turn options into simple to check vars. */
-    int incr = (flags & ZADD_INCR) != 0;
-    int nx = (flags & ZADD_NX) != 0;
-    int xx = (flags & ZADD_XX) != 0;
-    int ch = (flags & ZADD_CH) != 0;
-
-    //判断参数个数，偶数个
-    elements = c->argc-scoreidx;
-    if (elements % 2 || !elements) {
-        addReply(c,shared.syntaxerr);
-        return;
-    }
-    elements /= 2;
-
-  	//nx与xx不兼容
-    if (nx && xx) {
-        addReplyError(c,
-            "XX and NX options at the same time are not compatible");
-        return;
-    }
-
-    //inrc与elements不兼容
-    if (incr && elements > 1) {
-        addReplyError(c,
-            "INCR option supports a single increment-element pair");
-        return;
-    }
-	
-    //解析所有sroce
-    scores = zmalloc(sizeof(double)*elements);
-    for (j = 0; j < elements; j++) {
-        if (getDoubleFromObjectOrReply(c,c->argv[scoreidx+j*2],&scores[j],NULL)
-            != C_OK) goto cleanup;
-    }
-
-   	//查找redisObject
-    zobj = lookupKeyWrite(c->db,key);
-    if (zobj == NULL) {
-        //key不存在,若是xx类型
-        if (xx) goto reply_to_client;
-        //判断zset_max_ziplist_entries，ziplist的数量
-        if (server.zset_max_ziplist_entries == 0 ||
-            server.zset_max_ziplist_value < sdslen(c->argv[scoreidx+1]->ptr)){
-            //直接创建跳跃表
-            zobj = createZsetObject();
-        } else {
-            //创建ziplist
-            zobj = createZsetZiplistObject();
-        }
-        dbAdd(c->db,key,zobj);
-    } else {
-        //key已经存在
-        if (zobj->type != OBJ_ZSET) {
-            addReply(c,shared.wrongtypeerr);
-            goto cleanup;
-        }
-    }
-
-    //遍历元素
-    for (j = 0; j < elements; j++) {
-        double newscore;
-        score = scores[j];
-        int retflags = flags;
-
-        ele = c->argv[scoreidx+1+j*2]->ptr;
-        //添加元素
-        int retval = zsetAdd(zobj, score, ele, &retflags, &newscore);
-        if (retval == 0) {
-            addReplyError(c,nanerr);
-            goto cleanup;
-        }
-        if (retflags & ZADD_ADDED) added++;
-        if (retflags & ZADD_UPDATED) updated++;
-        if (!(retflags & ZADD_NOP)) processed++;
-        score = newscore;
-    }
-    server.dirty += (added+updated);
-
-reply_to_client:
-    if (incr) { 
-        if (processed)
-            addReplyDouble(c,score);
-        else
-            addReplyNull(c);
-    } else { 
-        addReplyLongLong(c,ch ? added+updated : added);
-    }
-
-cleanup:
-    zfree(scores);
-    if (added || updated) {
-        signalModifiedKey(c,c->db,key);
-        notifyKeyspaceEvent(NOTIFY_ZSET,
-            incr ? "zincr" : "zadd", key, c->db->id);
-    }
-}
-
 zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
     unsigned int rank[ZSKIPLIST_MAXLEVEL];
@@ -1463,6 +1326,7 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     x = zslCreateNode(level,score,ele);
     //新增节点每层都要设置该节点的forward和span
     for (i = 0; i < level; i++) {
+        //将当前节点插入uppate节点之前
         x->level[i].forward = update[i]->level[i].forward;
         update[i]->level[i].forward = x;
 
@@ -1488,6 +1352,16 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
     // 新增跳跃表长度
     zsl->length++;
     return x;
+}
+
+//随机层数，最高32层
+//1/4的概率升层
+define ZSKIPLIST_P 0.25
+int zslRandomLevel(void) {
+    int level = 1;
+    while ((random()&0xFFFF) < (ZSKIPLIST_P * 0xFFFF))
+        level += 1;
+    return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
 }
 ```
 
@@ -2962,8 +2836,6 @@ void sunionDiffGenericCommand(client *c, robj **setkeys, int setnum,
 ```
 编码：
 	OBJ_ENCODING_QUICKLIST
-	
-由list+ziplist组成
 ```
 
 #### list插入：
@@ -3103,6 +2975,260 @@ void quicklistSetCompressDepth(quicklist *quicklist, int compress) {
         compress = 0;
     }
     quicklist->compress = compress;
+}
+```
+
+### 3-5.Zset类型
+
+```
+编码:
+	OBJ_ENCODING_SKIPLIST
+```
+
+#### Zset插入：
+
+```C
+define ZADD_NONE 0
+define ZADD_INCR (1<<0)    //增加分值
+define ZADD_NX (1<<1)     //只添加不存在的元素
+define ZADD_XX (1<<2)     //只修改已存在的元素
+define ZADD_CH (1<<16)    //返回新增或者更新数
+//添加元素
+void zaddCommand(client *c) {
+    zaddGenericCommand(c,ZADD_NONE);
+}
+
+//增加分值
+void zincrbyCommand(client *c) {
+    zaddGenericCommand(c,ZADD_INCR);
+}
+
+void zaddGenericCommand(client *c, int flags) {
+    static char *nanerr = "resulting score is not a number (NaN)";
+    robj *key = c->argv[1];
+    robj *zobj;
+    sds ele;
+    double score = 0, *scores = NULL;
+    int j, elements;
+    int scoreidx = 0;
+   
+    int added = 0;     //新增元素的数量
+    int updated = 0;    //更新元素的数量
+    int processed = 0;  //处理元素的数量
+
+    //查看指令
+    scoreidx = 2;
+    while(scoreidx < c->argc) {
+        char *opt = c->argv[scoreidx]->ptr;
+        if (!strcasecmp(opt,"nx")) flags |= ZADD_NX;
+        else if (!strcasecmp(opt,"xx")) flags |= ZADD_XX;
+        else if (!strcasecmp(opt,"ch")) flags |= ZADD_CH;
+        else if (!strcasecmp(opt,"incr")) flags |= ZADD_INCR;
+        else break;
+        scoreidx++;
+    }
+
+    int incr = (flags & ZADD_INCR) != 0;
+    int nx = (flags & ZADD_NX) != 0;
+    int xx = (flags & ZADD_XX) != 0;
+    int ch = (flags & ZADD_CH) != 0;
+
+    //判断参数个数，偶数个
+    elements = c->argc-scoreidx;
+    if (elements % 2 || !elements) {
+        addReply(c,shared.syntaxerr);
+        return;
+    }
+    elements /= 2;
+
+  	//nx与xx不兼容
+    if (nx && xx) {
+        addReplyError(c,
+            "XX and NX options at the same time are not compatible");
+        return;
+    }
+
+    //inrc与elements不兼容
+    if (incr && elements > 1) {
+        addReplyError(c,
+            "INCR option supports a single increment-element pair");
+        return;
+    }
+	
+    //解析所有sroce
+    scores = zmalloc(sizeof(double)*elements);
+    for (j = 0; j < elements; j++) {
+        if (getDoubleFromObjectOrReply(c,c->argv[scoreidx+j*2],&scores[j],NULL)
+            != C_OK) goto cleanup;
+    }
+
+   	//查找redisObject
+    zobj = lookupKeyWrite(c->db,key);
+    if (zobj == NULL) {
+        //key不存在,若是xx类型
+        if (xx) goto reply_to_client;
+        //判断zset_max_ziplist_entries，ziplist的数量
+        if (server.zset_max_ziplist_entries == 0 ||
+            server.zset_max_ziplist_value < sdslen(c->argv[scoreidx+1]->ptr)){
+            //直接创建跳跃表
+            zobj = createZsetObject();
+        } else {
+            //创建ziplist
+            zobj = createZsetZiplistObject();
+        }
+        dbAdd(c->db,key,zobj);
+    } else {
+        //key已经存在
+        if (zobj->type != OBJ_ZSET) {
+            addReply(c,shared.wrongtypeerr);
+            goto cleanup;
+        }
+    }
+
+    //遍历元素
+    for (j = 0; j < elements; j++) {
+        double newscore;
+        score = scores[j];
+        int retflags = flags;
+
+        ele = c->argv[scoreidx+1+j*2]->ptr;
+        //添加元素
+        int retval = zsetAdd(zobj, score, ele, &retflags, &newscore);
+        if (retval == 0) {
+            addReplyError(c,nanerr);
+            goto cleanup;
+        }
+        if (retflags & ZADD_ADDED) added++;
+        if (retflags & ZADD_UPDATED) updated++;
+        if (!(retflags & ZADD_NOP)) processed++;
+        score = newscore;
+    }
+    server.dirty += (added+updated);
+
+reply_to_client:
+    if (incr) { 
+        if (processed)
+            addReplyDouble(c,score);
+        else
+            addReplyNull(c);
+    } else { 
+        addReplyLongLong(c,ch ? added+updated : added);
+    }
+
+cleanup:
+    zfree(scores);
+    if (added || updated) {
+        signalModifiedKey(c,c->db,key);
+        notifyKeyspaceEvent(NOTIFY_ZSET,
+            incr ? "zincr" : "zadd", key, c->db->id);
+    }
+}
+
+int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
+  
+    int incr = (*flags & ZADD_INCR) != 0;
+    int nx = (*flags & ZADD_NX) != 0;
+    int xx = (*flags & ZADD_XX) != 0;
+    *flags = 0; /* We'll return our response flags. */
+    double curscore;
+
+    /* NaN as input is an error regardless of all the other parameters. */
+    if (isnan(score)) {
+        *flags = ZADD_NAN;
+        return 0;
+    }
+
+    /* Update the sorted set according to its encoding. */
+    if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
+        unsigned char *eptr;
+
+        if ((eptr = zzlFind(zobj->ptr,ele,&curscore)) != NULL) {
+            /* NX? Return, same element already exists. */
+            if (nx) {
+                *flags |= ZADD_NOP;
+                return 1;
+            }
+
+            /* Prepare the score for the increment if needed. */
+            if (incr) {
+                score += curscore;
+                if (isnan(score)) {
+                    *flags |= ZADD_NAN;
+                    return 0;
+                }
+                if (newscore) *newscore = score;
+            }
+
+            /* Remove and re-insert when score changed. */
+            if (score != curscore) {
+                zobj->ptr = zzlDelete(zobj->ptr,eptr);
+                zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+                *flags |= ZADD_UPDATED;
+            }
+            return 1;
+        } else if (!xx) {
+            /* Optimize: check if the element is too large or the list
+             * becomes too long *before* executing zzlInsert. */
+            zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+            if (zzlLength(zobj->ptr) > server.zset_max_ziplist_entries ||
+                sdslen(ele) > server.zset_max_ziplist_value)
+                zsetConvert(zobj,OBJ_ENCODING_SKIPLIST);
+            if (newscore) *newscore = score;
+            *flags |= ZADD_ADDED;
+            return 1;
+        } else {
+            *flags |= ZADD_NOP;
+            return 1;
+        }
+    } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
+        zset *zs = zobj->ptr;
+        zskiplistNode *znode;
+        dictEntry *de;
+
+        de = dictFind(zs->dict,ele);
+        if (de != NULL) {
+            /* NX? Return, same element already exists. */
+            if (nx) {
+                *flags |= ZADD_NOP;
+                return 1;
+            }
+            curscore = *(double*)dictGetVal(de);
+
+            /* Prepare the score for the increment if needed. */
+            if (incr) {
+                score += curscore;
+                if (isnan(score)) {
+                    *flags |= ZADD_NAN;
+                    return 0;
+                }
+                if (newscore) *newscore = score;
+            }
+
+            /* Remove and re-insert when score changes. */
+            if (score != curscore) {
+                znode = zslUpdateScore(zs->zsl,curscore,ele,score);
+                /* Note that we did not removed the original element from
+                 * the hash table representing the sorted set, so we just
+                 * update the score. */
+                dictGetVal(de) = &znode->score; /* Update score ptr. */
+                *flags |= ZADD_UPDATED;
+            }
+            return 1;
+        } else if (!xx) {
+            ele = sdsdup(ele);
+            znode = zslInsert(zs->zsl,score,ele);
+            serverAssert(dictAdd(zs->dict,ele,&znode->score) == DICT_OK);
+            *flags |= ZADD_ADDED;
+            if (newscore) *newscore = score;
+            return 1;
+        } else {
+            *flags |= ZADD_NOP;
+            return 1;
+        }
+    } else {
+        serverPanic("Unknown sorted set encoding");
+    }
+    return 0; /* Never reached. */
 }
 ```
 
