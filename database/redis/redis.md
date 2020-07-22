@@ -1427,6 +1427,11 @@ int zslValueLteMax(double value, zrangespec *spec) {
 struct redisServer {
     redisDb *db;//redis 数据库
     int dbnum; //数据库数量
+    struct saveparam *saveparams;//RDB配置
+    long long dirty; //上次保存到现在修改的次数
+    long long dirty_before_bgsave;//上次持久化时的dirty
+    time_t lastsave; //上次保存的时间戳
+    int saveparamslen;  //RDB保存策略个数
 }
 
 typedef struct redisDb {
@@ -2032,6 +2037,67 @@ int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now) {
     } else {
         return 0;
     }
+}
+```
+
+#### SELECT：
+
+```c
+int selectDb(client *c, int id) {
+    // 判定传递的 id 是否符合 数据库序列 条件
+    if (id < 0 || id >= server.dbnum)
+        return C_ERR;
+    // 设置 客户端 当前操作 db 为 对应序列的 db数组里的数据库
+    c->db = &server.db[id];
+    // 返回 OK
+    return C_OK;
+}
+```
+
+#### DB操作:
+
+```C
+void dbAdd(redisDb *db, robj *key, robj *val) {
+    // 复制键对象
+    sds copy = sdsdup(key->ptr);
+    // 将键值对写入数据库字典
+    int retval = dictAdd(db->dict, copy, val);
+ 	// 判断写入结果
+    serverAssertWithInfo(NULL,key,retval == DICT_OK);
+    // 如果数据类型为 列表类型，执行一些事件操作，毕竟 list 可能有一些 阻塞操作
+    if (val->type == OBJ_LIST ||
+        val->type == OBJ_ZSET ||
+        val->type == OBJ_STREAM)
+        signalKeyAsReady(db, key);
+    // 如果为集群状态，则需要将数据添加到 对应集群 节点
+    if (server.cluster_enabled) slotToKeyAdd(key->ptr);
+}
+
+int dbDelete(redisDb *db, robj *key) {
+    return server.lazyfree_lazy_server_del ? dbAsyncDelete(db,key) :
+                                             dbSyncDelete(db,key);
+}
+
+void setKey(client *c, redisDb *db, robj *key, robj *val) {
+    genericSetKey(c,db,key,val,0,1);
+}
+
+void genericSetKey(client *c, redisDb *db, robj *key, 
+                   robj *val, int keepttl, int signal) {
+    // 查找键值对
+    if (lookupKeyWrite(db,key) == NULL) {
+        // 不存在则添加 键值对
+        dbAdd(db,key,val);
+    } else {
+        // 重写键值
+        dbOverwrite(db,key,val);
+    }
+    // 对象引用计数 +1
+    incrRefCount(val);
+    // 移除过期时间
+    if (!keepttl) removeExpire(db,key);
+    // 发送修改事件通知
+    if (signal) signalModifiedKey(c,db,key);
 }
 ```
 
@@ -2982,8 +3048,23 @@ void quicklistSetCompressDepth(quicklist *quicklist, int compress) {
 
 ```
 编码:
+	OBJ_ENCODING_ZIPLIST
 	OBJ_ENCODING_SKIPLIST
+	
+默认ZIPLIST：
+	1.元素数量>zset_max_ziplist_entries
+	2.元素大小>zset_max_ziplist_value
+时ZIPLIST转化成SKIPLIST
 ```
+
+```c
+typedef struct zset {
+    dict *dict; //字典
+    zskiplist *zsl; //跳跃表
+} zset;
+```
+
+
 
 #### Zset插入：
 
@@ -3132,24 +3213,24 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
     *flags = 0; /* We'll return our response flags. */
     double curscore;
 
-    /* NaN as input is an error regardless of all the other parameters. */
+   	//分值不能超
     if (isnan(score)) {
         *flags = ZADD_NAN;
         return 0;
     }
 
-    /* Update the sorted set according to its encoding. */
     if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
+        //ziplist结构
         unsigned char *eptr;
 
         if ((eptr = zzlFind(zobj->ptr,ele,&curscore)) != NULL) {
-            /* NX? Return, same element already exists. */
+            //从ziplist中获取元素
             if (nx) {
                 *flags |= ZADD_NOP;
                 return 1;
             }
 
-            /* Prepare the score for the increment if needed. */
+           	//自增
             if (incr) {
                 score += curscore;
                 if (isnan(score)) {
@@ -3159,19 +3240,22 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
                 if (newscore) *newscore = score;
             }
 
-            /* Remove and re-insert when score changed. */
+            //分值发生变化
             if (score != curscore) {
+                //删除原来的节点
                 zobj->ptr = zzlDelete(zobj->ptr,eptr);
+                //新增当前节点
                 zobj->ptr = zzlInsert(zobj->ptr,ele,score);
                 *flags |= ZADD_UPDATED;
             }
             return 1;
         } else if (!xx) {
-            /* Optimize: check if the element is too large or the list
-             * becomes too long *before* executing zzlInsert. */
+           	//新增一个节点
             zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+            //
             if (zzlLength(zobj->ptr) > server.zset_max_ziplist_entries ||
                 sdslen(ele) > server.zset_max_ziplist_value)
+                //条件满足，ziplist转化为skiplist
                 zsetConvert(zobj,OBJ_ENCODING_SKIPLIST);
             if (newscore) *newscore = score;
             *flags |= ZADD_ADDED;
@@ -3181,21 +3265,25 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
             return 1;
         }
     } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
+        //若是跳跃表类型
         zset *zs = zobj->ptr;
         zskiplistNode *znode;
         dictEntry *de;
-
+		//从字典中获取元素
         de = dictFind(zs->dict,ele);
         if (de != NULL) {
-            /* NX? Return, same element already exists. */
+            //若存在
             if (nx) {
+                //nx则不更新
                 *flags |= ZADD_NOP;
                 return 1;
             }
+            //获取当前分值
             curscore = *(double*)dictGetVal(de);
 
-            /* Prepare the score for the increment if needed. */
+            //是否需要自增
             if (incr) {
+                //自增分值
                 score += curscore;
                 if (isnan(score)) {
                     *flags |= ZADD_NAN;
@@ -3204,19 +3292,20 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
                 if (newscore) *newscore = score;
             }
 
-            /* Remove and re-insert when score changes. */
+            //若分值发生变化
             if (score != curscore) {
+                //跳跃表更新元素分值
                 znode = zslUpdateScore(zs->zsl,curscore,ele,score);
-                /* Note that we did not removed the original element from
-                 * the hash table representing the sorted set, so we just
-                 * update the score. */
-                dictGetVal(de) = &znode->score; /* Update score ptr. */
+                //字典表分值也更新
+                dictGetVal(de) = &znode->score;
                 *flags |= ZADD_UPDATED;
             }
             return 1;
         } else if (!xx) {
             ele = sdsdup(ele);
+            //新增跳跃表节点
             znode = zslInsert(zs->zsl,score,ele);
+            //新增dict节点
             serverAssert(dictAdd(zs->dict,ele,&znode->score) == DICT_OK);
             *flags |= ZADD_ADDED;
             if (newscore) *newscore = score;
@@ -3230,26 +3319,386 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
     }
     return 0; /* Never reached. */
 }
+
+unsigned char *zzlFind(unsigned char *zl, sds ele, double *score) {
+    //从index0开始
+    unsigned char *eptr = ziplistIndex(zl,0), *sptr;
+
+    while (eptr != NULL) {
+        sptr = ziplistNext(zl,eptr);
+        serverAssert(sptr != NULL);
+
+        if (ziplistCompare(eptr,(unsigned char*)ele,sdslen(ele))) {
+           	//比较元素，匹配则获取分值
+            if (score != NULL) *score = zzlGetScore(sptr);
+            return eptr;
+        }
+        eptr = ziplistNext(zl,sptr);
+    }
+    return NULL;
+}
+```
+
+#### ZIPLIST转化为SKIPLIST：
+
+```c
+void zsetConvert(robj *zobj, int encoding) {
+    zset *zs;
+    zskiplistNode *node, *next;
+    sds ele;
+    double score;
+
+    if (zobj->encoding == encoding) return;
+    //ZIPLIST
+    if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
+        unsigned char *zl = zobj->ptr;
+        unsigned char *eptr, *sptr;
+        unsigned char *vstr;
+        unsigned int vlen;
+        long long vlong;
+		//转为SKIPLIST
+        if (encoding != OBJ_ENCODING_SKIPLIST)
+            serverPanic("Unknown target encoding");
+
+        zs = zmalloc(sizeof(*zs));
+        //创建一个新的字典
+        zs->dict = dictCreate(&zsetDictType,NULL);
+        //创建跳跃表
+        zs->zsl = zslCreate();
+		//获取ziplist的第一个元素
+        eptr = ziplistIndex(zl,0);
+        serverAssertWithInfo(NULL,zobj,eptr != NULL);
+        sptr = ziplistNext(zl,eptr);
+        serverAssertWithInfo(NULL,zobj,sptr != NULL);
+
+        //遍历ziplist
+        while (eptr != NULL) {
+            score = zzlGetScore(sptr);
+            serverAssertWithInfo(NULL,zobj,ziplistGet(eptr,&vstr,&vlen,&vlong));
+            if (vstr == NULL)
+                ele = sdsfromlonglong(vlong);
+            else
+                ele = sdsnewlen((char*)vstr,vlen);
+			//将元素插入跳跃表
+            node = zslInsert(zs->zsl,score,ele);
+            serverAssert(dictAdd(zs->dict,ele,&node->score) == DICT_OK);
+            zzlNext(zl,&eptr,&sptr);
+        }
+
+        zfree(zobj->ptr);
+        //改变指针
+        zobj->ptr = zs;
+        //改变编码
+        zobj->encoding = OBJ_ENCODING_SKIPLIST;
+    } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
+        //SKIPLIST转化ZIPLIST
+        //创建一个ziplist
+        unsigned char *zl = ziplistNew();
+		
+        if (encoding != OBJ_ENCODING_ZIPLIST)
+            serverPanic("Unknown target encoding");
+
+       	//释放zet的dict
+        zs = zobj->ptr;
+        dictRelease(zs->dict);
+        //从头节点开始遍历
+        node = zs->zsl->header->level[0].forward;
+        zfree(zs->zsl->header);
+        zfree(zs->zsl);
+
+        //遍历SKIPLIST
+        while (node) {
+            //添加节点到ziplist
+            zl = zzlInsertAt(zl,NULL,node->ele,node->score);
+            next = node->level[0].forward;
+            zslFreeNode(node);
+            node = next;
+        }
+
+        zfree(zs);
+        zobj->ptr = zl;
+        zobj->encoding = OBJ_ENCODING_ZIPLIST;
+    } else {
+        serverPanic("Unknown sorted set encoding");
+    }
+}
+```
+
+#### ZSET查找:
+
+```c
+void zrangeCommand(client *c) {
+    zrangeGenericCommand(c,0);
+}
+
+void zrangeGenericCommand(client *c, int reverse) {
+    robj *key = c->argv[1];
+    robj *zobj;
+    int withscores = 0;
+    long start;
+    long end;
+    long llen;
+    long rangelen;
+
+    if ((getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != C_OK) ||
+        (getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != C_OK)) return;
+
+    if (c->argc == 5 && !strcasecmp(c->argv[4]->ptr,"withscores")) {
+        withscores = 1;
+    } else if (c->argc >= 5) {
+        addReply(c,shared.syntaxerr);
+        return;
+    }
+
+    if ((zobj = lookupKeyReadOrReply(c,key,shared.emptyarray)) == NULL
+         || checkType(c,zobj,OBJ_ZSET)) return;
+
+   	
+    llen = zsetLength(zobj);
+    if (start < 0) start = llen+start;
+    if (end < 0) end = llen+end;
+    if (start < 0) start = 0;
+	
+    if (start > end || start >= llen) {
+        addReply(c,shared.emptyarray);
+        return;
+    }
+    if (end >= llen) end = llen-1;
+    rangelen = (end-start)+1;
+
+    if (withscores && c->resp == 2)
+        addReplyArrayLen(c, rangelen*2);
+    else
+        addReplyArrayLen(c, rangelen);
+
+    //若编码是ZIPLIST
+    if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
+        unsigned char *zl = zobj->ptr;
+        unsigned char *eptr, *sptr;
+        unsigned char *vstr;
+        unsigned int vlen;
+        long long vlong;
+
+        //从2*start开始
+        if (reverse)
+            eptr = ziplistIndex(zl,-2-(2*start));
+        else
+            eptr = ziplistIndex(zl,2*start);
+
+        serverAssertWithInfo(c,zobj,eptr != NULL);
+        sptr = ziplistNext(zl,eptr);
+
+        //遍历rangelen个
+        while (rangelen--) {
+            serverAssertWithInfo(c,zobj,eptr != NULL && sptr != NULL);
+            serverAssertWithInfo(c,zobj,ziplistGet(eptr,&vstr,&vlen,&vlong));
+
+            if (withscores && c->resp > 2) addReplyArrayLen(c,2);
+            if (vstr == NULL)
+                addReplyBulkLongLong(c,vlong);
+            else
+                addReplyBulkCBuffer(c,vstr,vlen);
+            if (withscores) addReplyDouble(c,zzlGetScore(sptr));
+
+            if (reverse)
+                zzlPrev(zl,&eptr,&sptr);
+            else
+                zzlNext(zl,&eptr,&sptr);
+        }
+
+    } else if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
+        //若编码是SKIPLIST
+        zset *zs = zobj->ptr;
+        zskiplist *zsl = zs->zsl;
+        zskiplistNode *ln;
+        sds ele;
+
+       	//跳跃表直接获取start的节点
+        if (reverse) {
+            ln = zsl->tail;
+            if (start > 0)
+                ln = zslGetElementByRank(zsl,llen-start);
+        } else {
+            ln = zsl->header->level[0].forward;
+            if (start > 0)
+                ln = zslGetElementByRank(zsl,start+1);
+        }
+
+        //遍历rangelen个
+        while(rangelen--) {
+            serverAssertWithInfo(c,zobj,ln != NULL);
+            ele = ln->ele;
+            if (withscores && c->resp > 2) addReplyArrayLen(c,2);
+            addReplyBulkCBuffer(c,ele,sdslen(ele));
+            if (withscores) addReplyDouble(c,ln->score);
+            ln = reverse ? ln->backward : ln->level[0].forward;
+        }
+    } else {
+        serverPanic("Unknown sorted set encoding");
+    }
+}
 ```
 
 
 
 ## 4. Redis缓存淘汰策略
 
-```
-1.noeviction:当内存使用超过配置的时候会返回错误，不会驱逐任何键
-2.allkeys-lru:加入键的时候，如果过限，首先通过LRU算法驱逐最久没有使用的键
-3.volatile-lru:加入键的时候如果过限，首先从设置了过期时间的键集合中驱逐最久没有使用的键
-4.allkeys-random:加入键的时候如果过限，从所有key随机删除
-5.volatile-random：加入键的时候如果过限，从过期键的集合中随机驱逐
-6.volatile-ttl:从配置了过期时间的键中驱逐马上就要过期的键
-7.volatile-lfu:从所有配置了过期时间的键中驱逐使用频率最少的键
-8.allkeys-lfu:从所有键中驱逐使用频率最少的键
+```C
+define MAXMEMORY_FLAG_LRU (1<<0)
+define MAXMEMORY_FLAG_LFU (1<<1)
+define MAXMEMORY_FLAG_ALLKEYS (1<<2)
+define MAXMEMORY_FLAG_NO_SHARED_INTEGERS \
+    (MAXMEMORY_FLAG_LRU|MAXMEMORY_FLAG_LFU)
+//加入键的时候如果过限，首先从设置了过期时间的键集合中驱逐最久没有使用的键
+define MAXMEMORY_VOLATILE_LRU ((0<<8)|MAXMEMORY_FLAG_LRU)
+//从所有配置了过期时间的键中驱逐使用频率最少的键
+define MAXMEMORY_VOLATILE_LFU ((1<<8)|MAXMEMORY_FLAG_LFU)
+//从配置了过期时间的键中驱逐马上就要过期的键
+define MAXMEMORY_VOLATILE_TTL (2<<8)
+//加入键的时候如果过限，从过期键的集合中随机驱逐
+define MAXMEMORY_VOLATILE_RANDOM (3<<8)
+//加入键的时候，如果过限，首先通过LRU算法驱逐最久没有使用的键
+define MAXMEMORY_ALLKEYS_LRU ((4<<8)|MAXMEMORY_FLAG_LRU|MAXMEMORY_FLAG_ALLKEYS)
+//从所有键中驱逐使用频率最少的键
+define MAXMEMORY_ALLKEYS_LFU ((5<<8)|MAXMEMORY_FLAG_LFU|MAXMEMORY_FLAG_ALLKEYS)
+//加入键的时候如果过限，从所有key随机删除
+define MAXMEMORY_ALLKEYS_RANDOM ((6<<8)|MAXMEMORY_FLAG_ALLKEYS)
+//当内存使用超过配置的时候会返回错误，不会驱逐任何键
+define MAXMEMORY_NO_EVICTION (7<<8)
 ```
 
 ### Redis的LRU和LFU
 
-```c
+LRU:最近使用时间
+LFU:使用频次 
 
+```c
+   
+```
+
+## 5.Redis持久化
+
+### 1.RDB：
+
+将Redis中的数据以文件的形式存入硬盘
+
+```
+优点：
+	1.只有一个文件，灾备和恢复都十分便利。
+	2.备份是可以fork出子线程进行持久化,避免对服务的IO操作。
+缺点:
+	1.每次备份的数据集比较大
+	2.容易丢失数据
+```
+
+#### RDB文件结构:
+
+```mermaid
+graph LR;
+	1[REDIS 标识]-->2[RDB 版本]
+	subgraph  
+	2---B[RDB 文件的版本号]
+	end
+	2-->3[辅助信息]
+	subgraph  TB
+	3---C[RDB 文件的版本号]
+	end
+	3-->4[databases 数据库主体]
+	subgraph  TB
+	4---D[RDB 文件的版本号]
+	end
+	4-->5[EOF 结束符]
+	subgraph  TB
+	5---E[1 字节,标志 RDB 文件正文内容结束]
+	end
+	5-->6[校验和]
+	subgraph  TB
+	6---F[8字节的 CRC64 表示的文件校验和,用来验证文件数据内容的有效性,防篡改以及数据缺失]
+	end
+```
+
+#### 自动创建:
+
+config中配置：
+
+save 900 1 (多少秒内进行了几次修改)
+
+```c
+//redisServer.saveparams 存有RDB配置数组
+struct saveparam {
+    time_t seconds; //多少秒
+    int changes; //修改了几次
+};
+
+//定时任务
+int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+    //....
+    // 判断后台是否正在进行 rdb 或者 aof 操作
+    if (hasActiveChildProcess() || ldbPendingChildren()){
+        checkChildrenDone();
+    } else {
+       	// 遍历每一个 rdb 保存条件
+        for (j = 0; j < server.saveparamslen; j++) {
+            struct saveparam *sp = server.saveparams+j;
+
+            // 如果 数据保存记录 大于规定的修改次数 &&
+            // 上一次保存的时间大于规定时间或者上次BGSAVE命令执行成功，才执行 BGSAVE 操作
+            if (server.dirty >= sp->changes &&
+                server.unixtime-server.lastsave > sp->seconds &&
+                (server.unixtime-server.lastbgsave_try >
+                 CONFIG_BGSAVE_RETRY_DELAY ||
+                 server.lastbgsave_status == C_OK)){
+                 // 记录日志
+                serverLog(LL_NOTICE,"%d changes in %d seconds. Saving...",
+                    sp->changes, (int)sp->seconds);
+                rdbSaveInfo rsi, *rsiptr;
+                // 保存信息
+                rsiptr = rdbPopulateSaveInfo(&rsi);
+                // 异步保存操作
+                rdbSaveBackground(server.rdb_filename,rsiptr);
+                break;
+            }
+        }
+    }
+}
+```
+
+#### 手动创建:
+
+```c
+void bgsaveCommand(client *c) {
+    int schedule = 0;
+
+    if (c->argc > 1) {
+        if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"schedule")) {
+            schedule = 1;
+        } else {
+            addReply(c,shared.syntaxerr);
+            return;
+        }
+    }
+
+    rdbSaveInfo rsi, *rsiptr;
+    // 保存信息
+    rsiptr = rdbPopulateSaveInfo(&rsi);
+
+    if (server.rdb_child_pid != -1) {
+        addReplyError(c,"Background save already in progress");
+    } else if (hasActiveChildProcess()) {
+        if (schedule) {
+            server.rdb_bgsave_scheduled = 1;
+            addReplyStatus(c,"Background saving scheduled");
+        } else {
+            addReplyError(c,
+            "Another child process is active (AOF?): can't BGSAVE right now. "
+            "Use BGSAVE SCHEDULE in order to schedule a BGSAVE whenever "
+            "possible.");
+        }
+    } else if (rdbSaveBackground(server.rdb_filename,rsiptr) == C_OK) {
+        addReplyStatus(c,"Background saving started");
+    } else {
+        addReply(c,shared.err);
+    }
+}
 ```
 
