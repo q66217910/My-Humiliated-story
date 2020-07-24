@@ -1427,11 +1427,33 @@ int zslValueLteMax(double value, zrangespec *spec) {
 struct redisServer {
     redisDb *db;//redis 数据库
     int dbnum; //数据库数量
+    
+    //RDB
     struct saveparam *saveparams;//RDB配置
     long long dirty; //上次保存到现在修改的次数
     long long dirty_before_bgsave;//上次持久化时的dirty
     time_t lastsave; //上次保存的时间戳
     int saveparamslen;  //RDB保存策略个数
+    
+    //AOF
+    int aof_state; // AOF 状态，开启/关闭/可写
+    int aof_fsync; // AOF 同步策略，每次/每秒/佛系不主动
+    char *aof_filename; // AOF 文件名称
+    off_t aof_rewrite_base_size;  // 最后一次执行 BGREWRITEAOF 时， AOF 文件的大小
+    off_t aof_current_size; // AOF 文件的当前字节大小
+    pid_t aof_child_pid; // 负责进行 AOF 重写的子进程 ID
+    list *aof_rewrite_buf_blocks; // AOF 重写缓存链表，链接着多个缓存块
+    sds aof_buf; // AOF 缓冲区
+    int aof_fd; // AOF 文件的描述符
+    int aof_selected_db;  // AOF 的当前目标数据库
+    time_t aof_flush_postponed_start; // 推迟 write 操作的时间
+    time_t aof_last_fsync; // 最后一直执行 fsync 的时间
+    time_t aof_rewrite_time_last; // 最后一直执行 重写 的时间
+    time_t aof_rewrite_time_start; // AOF 重写的开始时间
+    int aof_lastbgrewrite_status; // 最后一次执行 BGREWRITEAOF 的结果
+    unsigned long aof_delayed_fsync; // 记录 AOF 的 write 操作被推迟了多少次
+    int aof_rewrite_incremental_fsync; // 指示是否需要每写入一定量的数据，就主动执行一次 fsync()
+    
 }
 
 typedef struct redisDb {
@@ -3594,27 +3616,48 @@ LFU:使用频次
 #### RDB文件结构:
 
 ```mermaid
-graph LR;
-	1[REDIS 标识]-->2[RDB 版本]
-	subgraph  
-	2---B[RDB 文件的版本号]
-	end
-	2-->3[辅助信息]
-	subgraph  TB
-	3---C[RDB 文件的版本号]
-	end
-	3-->4[databases 数据库主体]
-	subgraph  TB
-	4---D[RDB 文件的版本号]
-	end
-	4-->5[EOF 结束符]
-	subgraph  TB
-	5---E[1 字节,标志 RDB 文件正文内容结束]
-	end
-	5-->6[校验和]
-	subgraph  TB
-	6---F[8字节的 CRC64 表示的文件校验和,用来验证文件数据内容的有效性,防篡改以及数据缺失]
-	end
+graph TB;
+	1[REDIS 标识]-->2["RDB 版本(RDB 文件的版本号)"]
+	2-->3["辅助信息"]
+	3-->4["databases 数据库主体"]
+	4-->5["EOF 结束符(1 字节,标志 RDB 文件正文内容结束)"]
+	5-->6["校验和(8字节的 CRC64 表示的文件校验和,用来验证文件数据内容的有效性,防篡改以及数据缺失)"]
+```
+
+#### 辅助信息:
+
+```mermaid
+graph TB;
+	1["REDIS_version( REDIS 版本号)"]-->2["REDIS_bits ( REDIS 服务器 操作系统位数)"]
+	2-->3["ctime(系统当前时间)"]
+	3-->5["used-mem( REDIS 已使用的内存数)"]
+	5-->6["aof-preamble(是否为启用的 RDB+AOF 混合持久化模式，这个我们放在 AOF 结束的时候进行说明)"]
+```
+
+#### databases:
+
+```mermaid
+graph TB;
+	1["selectdb(标识当前进行切换数据库操作)"]-->2["db_number ( 当前数据库 id)"]
+	2-->3["db_size(当前数据库键值对个数)"]
+	3-->4["expire_size(当前数据库过期键个数)"]
+	4-->5["键值对数据"]
+```
+
+
+
+#### 不同编码类型在RDB中的存储:
+
+```
+OBJ_ENCODING_INT: 保存对象是长度不超过 32 位的整数，超过以后转换为字符串保存
+OBJ_ENCODING_RAW: 长度小于等于 20 字节使用普通字符串直接 存储,长度大于 20字节使用 LZF 压缩字符串 存储
+OBJ_ENCODING_LINKEDLIST/OBJ_ENCODING_QUICKLIST/OBJ_ENCODING_SKIPLIST
+OBJ_ENCODING_ZIPLIST/OBJ_ENCODING_INTSET:
+	// 普通字符串元素
+	list_len |len 1| value 1 | len 2 | value 2 | ... | len N | value N
+	// 有压缩字符串元素
+	list_len | len 1 | value 1 | 压缩后的长度 | 原长度 | value 2 | ... | len N | value N
+
 ```
 
 #### 自动创建:
@@ -3698,6 +3741,797 @@ void bgsaveCommand(client *c) {
         addReplyStatus(c,"Background saving started");
     } else {
         addReply(c,shared.err);
+    }
+}
+```
+
+#### RBD保存：
+
+```C
+//rdb保存信息
+rdbSaveInfo *rdbPopulateSaveInfo(rdbSaveInfo *rsi) {
+    rdbSaveInfo rsi_init = RDB_SAVE_INFO_INIT;
+    *rsi = rsi_init;
+	//如果是主节点并且开启日志同步
+    if (!server.masterhost && server.repl_backlog) {
+        rsi->repl_stream_db = server.slaveseldb == -1 ? 0 : server.slaveseldb;
+        return rsi;
+    }
+
+  	//从服务要连接主实例获取数据库
+    if (server.master) {
+        rsi->repl_stream_db = server.master->db->id;
+        return rsi;
+    }
+
+    //若有缓存
+    if (server.cached_master) {
+        rsi->repl_stream_db = server.cached_master->db->id;
+        return rsi;
+    }
+    return NULL;
+}
+
+//开始保存
+int rdbSaveBackground(char *filename, rdbSaveInfo *rsi) {
+    pid_t childpid;
+	// 检查后台是否正在执行 aof 或者 rdb 操作
+    if (hasActiveChildProcess()) return C_ERR;
+	// 拿出 数据保存记录，保存为 上次记录
+    server.dirty_before_bgsave = server.dirty;
+    // bgsave 时间
+    server.lastbgsave_try = time(NULL);
+    // 打开子进程通讯管道
+    openChildInfoPipe();
+	// 打开子进程
+    if ((childpid = redisFork()) == 0) {
+        //子进程工作
+        int retval;
+
+       // 子进程 title 修改
+        redisSetProcTitle("redis-rdb-bgsave");
+        redisSetCpuAffinity(server.bgsave_cpulist);
+        // 执行rdb 写入操作
+        retval = rdbSave(filename,rsi);
+        //保存成功
+        if (retval == C_OK) {
+            sendChildCOWInfo(CHILD_INFO_TYPE_RDB, "RDB");
+        }
+         // 退出子进程
+        exitFromChild((retval == C_OK) ? 0 : 1);
+    } else {
+        // 父进程操作
+        if (childpid == -1) {
+            // 如果创建子进程失败
+            // 关闭进程通讯管道
+            closeChildInfoPipe();
+            // 上次 bgsave 保存状态置位 失败
+            server.lastbgsave_status = C_ERR;
+            // 记录日志
+            serverLog(LL_WARNING,"Can't save in background: fork: %s",
+                strerror(errno));
+            return C_ERR;
+        }
+        // 日志记录
+        serverLog(LL_NOTICE,"Background saving started by pid %d",childpid);
+        // rdb 保存开始时间
+        server.rdb_save_time_start = time(NULL);
+        // bgsave 子进程
+        server.rdb_child_pid = childpid;
+        // 子进程方式
+        server.rdb_child_type = RDB_CHILD_TYPE_DISK;
+        return C_OK;
+    }
+    return C_OK; /* unreached */
+}
+
+int rdbSave(char *filename, rdbSaveInfo *rsi) {
+    char tmpfile[256];
+    // 当前工作目录
+    char cwd[MAXPATHLEN];
+    FILE *fp;
+    rio rdb;
+    int error = 0;
+	// 创建以当前进程ID命名的临时文件
+    snprintf(tmpfile,256,"temp-%d.rdb", (int) getpid());
+    // 打开文件句柄
+    fp = fopen(tmpfile,"w");
+    // 如果打开文件句柄失败
+    if (!fp) {
+        // 记录日志
+        char *cwdp = getcwd(cwd,MAXPATHLEN);
+        serverLog(LL_WARNING,
+            "Failed opening the RDB file %s (in server root dir %s) "
+            "for saving: %s",
+            filename,
+            cwdp ? cwdp : "unknown",
+            strerror(errno));
+        return C_ERR;
+    }
+	// 初始化 I/O，用于后续操作
+    rioInitWithFile(&rdb,fp);
+    //开始保存
+    startSaving(RDBFLAGS_NONE);
+
+    if (server.rdb_save_incremental_fsync)
+        rioSetAutoSync(&rdb,REDIS_AUTOSYNC_BYTES);
+
+     // 执行写入操作的主逻辑
+    if (rdbSaveRio(&rdb,&error,RDBFLAGS_NONE,rsi) == C_ERR) {
+        errno = error;
+        goto werr;
+    }
+
+    // 确定写入缓冲区里没有剩下内容
+    if (fflush(fp) == EOF) goto werr;
+    if (fsync(fileno(fp)) == -1) goto werr;
+    if (fclose(fp) == EOF) goto werr;
+
+    // 重新命名 rdb 文件，把之前临时的名称修改为正式的 rdb 文件名称
+    if (rename(tmpfile,filename) == -1) {
+        char *cwdp = getcwd(cwd,MAXPATHLEN);
+        serverLog(LL_WARNING,
+            "Error moving temp DB file %s on the final "
+            "destination %s (in server root dir %s): %s",
+            tmpfile,
+            filename,
+            cwdp ? cwdp : "unknown",
+            strerror(errno));
+        unlink(tmpfile);
+        stopSaving(0);
+        return C_ERR;
+    }
+
+    // 写入完成，打印日志
+    serverLog(LL_NOTICE,"DB saved on disk");
+    // 清理数据保存记录
+    server.dirty = 0;
+    // 最后一次完成 SAVE 命令的时间
+    server.lastsave = time(NULL);
+    // 最后一次 bgsave 的状态置位 成功
+    server.lastbgsave_status = C_OK;
+    stopSaving(1);
+    return C_OK;
+
+werr:
+    serverLog(LL_WARNING,"Write error saving DB on disk: %s", strerror(errno));
+    fclose(fp);
+    unlink(tmpfile);
+    stopSaving(0);
+    return C_ERR;
+}
+
+int rdbSaveRio(rio *rdb, int *error, int rdbflags, rdbSaveInfo *rsi) {
+    dictIterator *di = NULL;
+    dictEntry *de;
+    char magic[10];
+    int j;
+    uint64_t cksum;
+    size_t processed = 0;
+	// 设置文件校验和数据
+    if (server.rdb_checksum)
+        rdb->update_cksum = rioGenericUpdateChecksum;
+    // 组合头标识内容：REDIS + RDB文件版本
+    snprintf(magic,sizeof(magic),"REDIS%04d",RDB_VERSION);
+    // 写入 REDIS文件标识和RDB版本号
+    if (rdbWriteRaw(rdb,magic,9) == -1) goto werr;
+    // 写入辅助信息（REDIS版本、服务器操作系统位数、当前时间 等等数据）
+    if (rdbSaveInfoAuxFields(rdb,rdbflags,rsi) == -1) goto werr;
+    if (rdbSaveModulesAux(rdb, REDISMODULE_AUX_BEFORE_RDB) == -1) goto werr;
+	// 遍历每一个数据库，逐个数据库数据保存
+    for (j = 0; j < server.dbnum; j++) {
+        // 获取数据库指针地址，因为 server 存储了第一个数据库的指针地址，而且数据库指针地址是连续的
+        redisDb *db = server.db+j;
+        // 数据库字典
+        dict *d = db->dict;
+        // 跳过空数据库
+        if (dictSize(d) == 0) continue;
+        // 初始化数据库迭代器，方便遍历数据库所有数据
+        di = dictGetSafeIterator(d);
+
+        // 写入数据库部分的开始标识
+        if (rdbSaveType(rdb,RDB_OPCODE_SELECTDB) == -1) goto werr;
+        // 写入当前数据库号
+        if (rdbSaveLen(rdb,j) == -1) goto werr;
+
+       // 获取数据库字典的大小和过期键字典的大小
+        uint64_t db_size, expires_size;
+        // 数据库字典大小，也就是键值对个数，为了编码方便这些大小最大为UINT32_MAX
+        db_size = dictSize(db->dict);
+        // 数据库过期键字典大小，也就是过期键值对个数，为了编码方便这些大小最大为UINT32_MAX
+        expires_size = dictSize(db->expires);
+         // 写入当前待写入数据的类型，此处为 RDB_OPCODE_RESIZEDB，用来载入的时候标识 后续的两种 大小数据，方便申请 哈希表初始大小
+        if (rdbSaveType(rdb,RDB_OPCODE_RESIZEDB) == -1) goto werr;
+        // 保存 数据库大小
+        if (rdbSaveLen(rdb,db_size) == -1) goto werr;
+        // 保存 数据库过期键值对大小
+        if (rdbSaveLen(rdb,expires_size) == -1) goto werr;
+
+         // 遍历键值对
+        while((de = dictNext(di)) != NULL) {
+            // 获取键
+            sds keystr = dictGetKey(de);
+            // 值对象
+            robj key, *o = dictGetVal(de);
+            long long expire;
+			// 初始化 key，因为操作的是 key 字符串对象，而不是直接操作 键的字符串内容
+            initStaticStringObject(key,keystr);
+            // 获取键的过期数据
+            expire = getExpire(db,&key);
+            // 保存键值对数据
+            if (rdbSaveKeyValuePair(rdb,&key,o,expire) == -1) goto werr;
+            
+			// 说明是在 aofrewrite 且开启了 RDB-AOF混合开关 此时就会从父进程去读取增量数据
+            if (rdbflags & RDBFLAGS_AOF_PREAMBLE &&
+                rdb->processed_bytes > processed+AOF_READ_DIFF_INTERVAL_BYTES){
+                processed = rdb->processed_bytes;
+                aofReadDiffFromParent();
+            }
+        }
+        // 释放迭代器
+        dictReleaseIterator(di);
+        // 先不重置 迭代器变量，下次循环还需要使用
+        di = NULL;
+    }
+
+    // 如果有相关lua脚本信息，这些信息也需要保存
+    if (rsi && dictSize(server.lua_scripts)) {
+        di = dictGetIterator(server.lua_scripts);
+        // 遍历所有 lua脚本
+        while((de = dictNext(di)) != NULL) {
+            // 获取脚本内容
+            robj *body = dictGetVal(de);
+            // 保存脚本内容信息
+            if (rdbSaveAuxField(rdb,"lua",3,body->ptr,sdslen(body->ptr)) == -1)
+                goto werr;
+        }
+        dictReleaseIterator(di);
+        di = NULL; /* So that we don't release it again on error. */
+    }
+
+    if (rdbSaveModulesAux(rdb, REDISMODULE_AUX_AFTER_RDB) == -1) goto werr;
+
+    // 写入结束符
+    if (rdbSaveType(rdb,RDB_OPCODE_EOF) == -1) goto werr;
+
+    // 写入CRC64校验和
+    cksum = rdb->cksum;
+    memrev64ifbe(&cksum);
+    if (rioWrite(rdb,&cksum,8) == 0) goto werr;
+    return C_OK;
+
+werr:
+    if (error) *error = errno;
+    if (di) dictReleaseIterator(di);
+    return C_ERR;
+}
+```
+
+### 2.AOF
+
+```
+ 只进行追加操作的文件，通过保存 Redis 服务器所执行的 命令来记录数据库的状态
+ 
+ 优势:
+ 	1.一秒钟进行一次fsync，突然宕机也只会损失一秒钟的数据
+ 劣势:
+ 	1.AOF文件会比RDB大
+ 	2.数据恢复比较慢
+ 	
+ AOF过程：
+ 	1.命令追加: 将命令数据写入到 aof_buf 缓冲区
+ 	2.写入缓冲: 将 aof_buf 缓冲区的数据写入到 系统 IO 缓冲区（OS cache）
+ 	3,同步磁盘: 将系统缓冲区数据同步到磁盘
+```
+
+#### AOF重写：
+
+```
+因为命令会特别多,AOF 文件就会非常大.Redis引入了AOF重写机制来压缩文件的体积
+	1.进程内已经超时的数据不在写入文件
+	2.无效命令不在写入文件
+	3.多条写的命令合并成一个
+```
+
+#### 命令追加:
+
+```C
+void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int argc) {
+    sds buf = sdsempty();
+    robj *tmpargv[3];
+
+    //当前命令所操作的数据库不一定跟上面最后一条命令的数据库一致，所以添加上 select dbnum 命令显式设置
+    if (dictid != server.aof_selected_db) {
+        char seldb[64];
+		// 重新设置 dbnum
+        snprintf(seldb,sizeof(seldb),"%d",dictid);
+        // 添加上 select dbnum 命令
+        buf = sdscatprintf(buf,"*2\r\n$6\r\nSELECT\r\n$%lu\r\n%s\r\n",
+            (unsigned long)strlen(seldb),seldb);
+        // 设置当前 aof 操作数据库
+        server.aof_selected_db = dictid;
+    }
+
+    // 如果是 EXPIRE/PEXPIRE/EXPIREAT 等命令
+    if (cmd->proc == expireCommand || cmd->proc == pexpireCommand ||
+        cmd->proc == expireatCommand) {
+        // 将 EXPIRE/PEXPIRE/EXPIREAT 命令都转换为 PEXPIREAT 命令
+        buf = catAppendOnlyExpireAtCommand(buf,cmd,argv[1],argv[2]);
+    } else if (cmd->proc == setexCommand || cmd->proc == psetexCommand) {
+        // 将SETEX/PSETEX命令转换为SET命令和PEXPIREAT命令
+        tmpargv[0] = createStringObject("SET",3);
+        tmpargv[1] = argv[1];
+        tmpargv[2] = argv[3];
+        buf = catAppendOnlyGenericCommand(buf,3,tmpargv);
+        decrRefCount(tmpargv[0]);
+        buf = catAppendOnlyExpireAtCommand(buf,cmd,argv[1],argv[2]);
+    } else if (cmd->proc == setCommand && argc > 3) {
+        int i;
+        robj *exarg = NULL, *pxarg = NULL;
+        // 将 set 里传递 expire 信息的 命令转换为SET命令和PEXPIREAT命令
+        for (i = 3; i < argc; i ++) {
+            if (!strcasecmp(argv[i]->ptr, "ex")) exarg = argv[i+1];
+            if (!strcasecmp(argv[i]->ptr, "px")) pxarg = argv[i+1];
+        }
+        serverAssert(!(exarg && pxarg));
+
+        if (exarg || pxarg) {
+            buf = catAppendOnlyGenericCommand(buf,3,argv);
+            if (exarg)
+                buf = catAppendOnlyExpireAtCommand(buf,server.expireCommand,argv[1],
+                                                   exarg);
+            if (pxarg)
+                buf = catAppendOnlyExpireAtCommand(buf,server.pexpireCommand,argv[1],
+                                                   pxarg);
+        } else {
+            buf = catAppendOnlyGenericCommand(buf,argc,argv);
+        }
+    } else {
+         // 所有其它命令并不需要转换操作或者已经完成转换，采用此函数将将写命令转化为命令协议格式的字符串
+        buf = catAppendOnlyGenericCommand(buf,argc,argv);
+    }
+
+    // 将格式化的命令字符串追加到 AOF缓冲区 中，AOF缓冲区 中的数据会在重新进入时间循环前写入到磁盘中，相应的客户端也会受到关于此次操作的回复
+    if (server.aof_state == AOF_ON)
+        server.aof_buf = sdscatlen(server.aof_buf,buf,sdslen(buf));
+
+   // 如果后台正在执行 AOF 文件重写操作（BGREWRITEAOF命令），为了记录当前正在重写的AOF文件和当前数据库的差异信息，我们还需要将重构后的命令追加到 AOF 重写缓存中
+    if (server.aof_child_pid != -1)
+        aofRewriteBufferAppend((unsigned char*)buf,sdslen(buf));
+
+    sdsfree(buf);
+}
+```
+
+#### 同步磁盘:
+
+```C
+define AOF_WRITE_LOG_ERROR_RATE 30 /* Seconds between errors logging. */
+void flushAppendOnlyFile(int force) {
+    ssize_t nwritten;
+    int sync_in_progress = 0;
+    mstime_t latency;
+    
+	// 如果 buf 为空
+    if (sdslen(server.aof_buf) == 0) {
+        if (server.aof_fsync == AOF_FSYNC_EVERYSEC &&
+            server.aof_fsync_offset != server.aof_current_size &&
+            server.unixtime > server.aof_last_fsync &&
+            !(sync_in_progress = aofFsyncInProgress())) {
+            goto try_fsync;
+        } else {
+            return;
+        }
+    }
+
+    // 如果同步策略为每秒同步
+    if (server.aof_fsync == AOF_FSYNC_EVERYSEC)
+        // 是否有 sync 在后台运行
+        sync_in_progress = aofFsyncInProgress();
+
+    // 每秒同步，并且 没有要求强制执行
+    if (server.aof_fsync == AOF_FSYNC_EVERYSEC && !force) {
+        // 如果后台正在 sync，我们延迟两秒执行
+        if (sync_in_progress) {
+            if (server.aof_flush_postponed_start == 0) {
+                // 前面没有推迟过 write 操作，这里将推迟写操作的起始时间记录下来然后就返回，不执行 					   write 或者 fsync
+                server.aof_flush_postponed_start = server.unixtime;
+                return;
+            } else if (server.unixtime - server.aof_flush_postponed_start < 2) {
+                // 如果之前已经因为 fsync 而推迟了 write 操作 但是推迟的时间不超过 2 秒，那么直接返					回，不执行 write 或者 fsync
+                return;
+            }
+            // 如果后台还有fsync 在执行，并且write已经推迟 >= 2 秒,那么执行写操作（write 将被阻塞）
+            server.aof_delayed_fsync++;
+            serverLog(LL_NOTICE,"Asynchronous AOF fsync is taking too long (disk is busy?). Writing the AOF buffer without waiting for fsync to complete, this may slow down Redis.");
+        }
+    }
+   
+    if (server.aof_flush_sleep && sdslen(server.aof_buf)) {
+        usleep(server.aof_flush_sleep);
+    }
+
+    // 设定 延迟监听
+    latencyStartMonitor(latency);
+    // 写入数据
+    nwritten = aofWrite(server.aof_fd,server.aof_buf,sdslen(server.aof_buf));
+    // 延迟监控结束
+    latencyEndMonitor(latency);
+     // 根据不同的状态将不同的延迟事件和延迟时间关联到延迟诊断的字典中
+    if (sync_in_progress) {
+        latencyAddSampleIfNeeded("aof-write-pending-fsync",latency);
+    } else if (hasActiveChildProcess()) {
+        latencyAddSampleIfNeeded("aof-write-active-child",latency);
+    } else {
+        latencyAddSampleIfNeeded("aof-write-alone",latency);
+    }
+    latencyAddSampleIfNeeded("aof-write",latency);
+
+    // 初始化延迟时间
+    server.aof_flush_postponed_start = 0;
+	 // 如果出现突发异常会造成写入错误，AOF 文件可能出现问题，比如写了一部分断电
+    if (nwritten != (ssize_t)sdslen(server.aof_buf)) {
+        static time_t last_write_error_log = 0;
+        int can_log = 0;
+
+        // 将日志的记录频率限制在每行 AOF_WRITE_LOG_ERROR_RATE=30 秒
+        if ((server.unixtime - last_write_error_log) > AOF_WRITE_LOG_ERROR_RATE) {
+            can_log = 1;
+            last_write_error_log = server.unixtime;
+        }
+
+        // 如果写入错误
+        if (nwritten == -1) {
+            if (can_log) {
+                serverLog(LL_WARNING,"Error writing to the AOF file: %s",
+                    strerror(errno));
+                server.aof_last_write_errno = errno;
+            }
+        } else {
+            if (can_log) {
+                serverLog(LL_WARNING,"Short write while writing to "
+                                       "the AOF file: (nwritten=%lld, "
+                                       "expected=%lld)",
+                                       (long long)nwritten,
+                                       (long long)sdslen(server.aof_buf));
+            }
+			// 尝试截断追加的不完整部分
+            if (ftruncate(server.aof_fd, server.aof_current_size) == -1) {
+                if (can_log) {
+                    serverLog(LL_WARNING, "Could not remove short write "
+                             "from the append-only file.  Redis may refuse "
+                             "to load the AOF the next time it starts.  "
+                             "ftruncate: %s", strerror(errno));
+                }
+            } else {
+                // 成功操作，那么 nwritten 初始为 -1
+                nwritten = -1;
+            }
+            server.aof_last_write_errno = ENOSPC;
+        }
+
+       // 如果策略为每次都写入的时候发生错误
+        if (server.aof_fsync == AOF_FSYNC_ALWAYS) {
+            // always 情况下的错误我们是不可能进行恢复的，因为尽管出错，我们对用户的回复是已经到达了输出缓冲区，并且我们还向用户说明(set sadd等操作的)写数据已经写到了磁盘
+            serverLog(LL_WARNING,"Can't recover from AOF write error when the AOF fsync policy is 'always'. Exiting...");
+            exit(1);
+        } else {
+           // 如果只写入了局部，没有办法用ftruncate()函数去恢复原来的AOF文件
+            server.aof_last_write_status = C_ERR;
+            if (nwritten > 0) {
+                 // 只能更新当前的AOF文件的大小
+                server.aof_current_size += nwritten;
+                // 删除AOF缓冲区写入的字节数
+                sdsrange(server.aof_buf,nwritten,-1);
+            }
+            return; 
+        }
+    } else {
+        // 写入成功过，如果之前状态还是写入错误，重置为成功
+        if (server.aof_last_write_status == C_ERR) {
+            serverLog(LL_WARNING,
+                "AOF write error looks solved, Redis can write again.");
+            server.aof_last_write_status = C_OK;
+        }
+    }
+    // aof 加长
+    server.aof_current_size += nwritten;
+
+    // 如果 AOF 缓存的大小足够小的话，那么重用这个缓存，否则的话，释放 AOF 缓存
+    // sdsavail(server.aof_buf)返回 aof_buf 可用空间的长度
+    // sdslen(server.aof_buf)返回 aof_buf 实际保存的字符串的长度
+    if ((sdslen(server.aof_buf)+sdsavail(server.aof_buf)) < 4000) {
+        // 清空 buf，重用
+        sdsclear(server.aof_buf);
+    } else {
+         // 释放 buf
+        sdsfree(server.aof_buf);
+        server.aof_buf = sdsempty();
+    }
+
+try_fsync:
+    // 如果 aof_no_fsync_on_rewrite 为 true 并且 进程存在证明 正在执行，则先不 fsync
+    if (server.aof_no_fsync_on_rewrite && hasActiveChildProcess())
+        return;
+
+    // 同步策略为 alway
+    if (server.aof_fsync == AOF_FSYNC_ALWAYS) {
+         // 添加延迟监控
+        latencyStartMonitor(latency);
+        // 同步磁盘
+        redis_fsync(server.aof_fd); 
+        // 延迟监控结束
+        latencyEndMonitor(latency);
+         // 将延迟事件和延迟时间关联到延迟诊断的字典中
+        latencyAddSampleIfNeeded("aof-fsync-always",latency);
+        server.aof_fsync_offset = server.aof_current_size;
+        // 上次同步时间
+        server.aof_last_fsync = server.unixtime;
+    } else if ((server.aof_fsync == AOF_FSYNC_EVERYSEC &&
+                server.unixtime > server.aof_last_fsync)) {
+         // 策略为每秒，而且距离上次操作已经超过 1秒
+        if (!sync_in_progress) {
+            // 放到后台执行
+            aof_background_fsync(server.aof_fd);
+            server.aof_fsync_offset = server.aof_current_size;
+        }
+        // 更新同步时间
+        server.aof_last_fsync = server.unixtime;
+    }
+}
+```
+
+### 6.Redis线程模型
+
+Reactor 模式
+
+```
+事件驱动:
+	1.文件事件 ( file event ):Redis 文件事件一般都是 套接字的 读写状态监控，然后回调相应接口进行处理
+	2.时间事件 ( time event ):时间事件 则是维护一个定时器，每当满足预设的时间要求，就将该时间事件标记为待处理，然后在 Redis 的事件循环中进行处理。
+```
+
+```C
+//文件事件
+typedef struct aeFileEvent {
+    // 文件事件类型 AE_READABLE|AE_WRITABLE|AE_BARRIER
+    // AE_READABLE 可读
+    // AE_WRITABLE 可写
+    // AE_BARRIER 通常情况下我们都是先执行读事件再执行写事件，如果设置了这个状态，程序永远不会在可读事件后执行可写事件
+    int mask;
+    // 可读事件回调函数
+    aeFileProc *rfileProc;
+    // 可写事件回调函数
+    aeFileProc *wfileProc;
+    // 客户端传入的数据
+    void *clientData;
+} aeFileEvent;
+
+typedef struct aeFiredEvent {
+    // 就绪文件句柄
+    int fd;
+    // 文件事件的 读写 类型
+    int mask;
+} aeFiredEvent;
+
+//时间事件
+typedef struct aeTimeEvent {
+    // 时间事件 id
+    long long id;
+    // 执行时间结点 秒
+    long when_sec;
+    // 执行时间结点 毫秒
+    long when_ms;
+    // 时间事件处理函数
+    aeTimeProc *timeProc;
+    // 时间事件终结函数
+    aeEventFinalizerProc *finalizerProc;
+    // 事件数据
+    void *clientData;
+    // 上一个时间事件
+    struct aeTimeEvent *prev;
+    // 下一个时间事件
+    struct aeTimeEvent *next;
+} aeTimeEvent;
+```
+
+#### 注册监听事件：
+
+```c
+static int aeApiAddEvent(aeEventLoop *eventLoop, int fd, int mask) {
+    // 事件状态数据
+    aeApiState *state = eventLoop->apidata;
+    struct epoll_event ee = {0}; 
+    // 判断事件是否已经设置类型，如果已经设置过就进行修改
+    int op = eventLoop->events[fd].mask == AE_NONE ?
+            EPOLL_CTL_ADD : EPOLL_CTL_MOD;
+
+    ee.events = 0;
+    // 合并之前的事件类型
+    mask |= eventLoop->events[fd].mask; 
+    // 根据 mask 映射 epoll 的事件类型
+    if (mask & AE_READABLE) ee.events |= EPOLLIN;
+    if (mask & AE_WRITABLE) ee.events |= EPOLLOUT;
+    // 设置事件所属目录文件描述符
+    ee.data.fd = fd;
+     // 将 ee 注册到 epoll 事件监控表
+    if (epoll_ctl(state->epfd,op,fd,&ee) == -1) return -1;
+    return 0;
+}
+```
+
+#### 事件轮询：
+
+```C
+define AE_FILE_EVENTS (1<<0) //文件事件
+define AE_TIME_EVENTS (1<<1) //时间事件
+define AE_ALL_EVENTS (AE_FILE_EVENTS|AE_TIME_EVENTS) //文件事件/时间事件
+define AE_DONT_WAIT (1<<2) //那么函数在处理完所有不许阻塞的事件之后，即刻返回
+define AE_CALL_BEFORE_SLEEP (1<<3)
+define AE_CALL_AFTER_SLEEP (1<<4)
+void aeMain(aeEventLoop *eventLoop) {
+    eventLoop->stop = 0;
+    while (!eventLoop->stop) {
+        aeProcessEvents(eventLoop, AE_ALL_EVENTS|
+                                   AE_CALL_BEFORE_SLEEP|
+                                   AE_CALL_AFTER_SLEEP);
+    }
+}
+
+int aeProcessEvents(aeEventLoop *eventLoop, int flags){
+    int processed = 0, numevents;
+
+   	//非文件事件和时间事件直接返回
+    if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
+
+    
+    if (eventLoop->maxfd != -1 ||
+        ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
+        int j;
+        aeTimeEvent *shortest = NULL;
+        struct timeval tv, *tvp;
+		// 获取最近的时间事件
+        if (flags & AE_TIME_EVENTS && !(flags & AE_DONT_WAIT))
+            shortest = aeSearchNearestTimer(eventLoop);
+        if (shortest) {
+            // 如果时间事件存在的话，那么根据最近可执行时间事件和现在时间的时间差来决定文件事件的阻塞时间
+            long now_sec, now_ms;
+			// 计算距今最近的时间事件还要多久才能达到，并将该时间距保存在 tv 结构中
+            aeGetTime(&now_sec, &now_ms);
+            tvp = &tv;
+
+            // 需要阻塞时间，时间差小于 0 ，说明事件已经可以执行了，将秒和毫秒设为 0 （不阻塞）
+            long long ms =
+                (shortest->when_sec - now_sec)*1000 +
+                shortest->when_ms - now_ms;
+
+            if (ms > 0) {
+                tvp->tv_sec = ms/1000;
+                tvp->tv_usec = (ms % 1000)*1000;
+            } else {
+                tvp->tv_sec = 0;
+                tvp->tv_usec = 0;
+            }
+        } else {
+           
+            if (flags & AE_DONT_WAIT) {
+                tv.tv_sec = tv.tv_usec = 0;
+                tvp = &tv;
+            } else {
+                tvp = NULL;
+            }
+        }
+
+        if (eventLoop->flags & AE_DONT_WAIT) {
+            tv.tv_sec = tv.tv_usec = 0;
+            tvp = &tv;
+        }
+
+        if (eventLoop->beforesleep != NULL && flags & AE_CALL_BEFORE_SLEEP)
+            eventLoop->beforesleep(eventLoop);
+
+      	//调用多路复用路由API
+        numevents = aeApiPoll(eventLoop, tvp);
+
+        if (eventLoop->aftersleep != NULL && flags & AE_CALL_AFTER_SLEEP)
+            eventLoop->aftersleep(eventLoop);
+
+        for (j = 0; j < numevents; j++) {
+             // 从已就绪数组中获取事件
+            aeFileEvent *fe = &eventLoop->events[eventLoop->fired[j].fd];
+            int mask = eventLoop->fired[j].mask;
+            int fd = eventLoop->fired[j].fd;
+            //fd触发的事件数
+            int fired = 0; 
+            int invert = fe->mask & AE_BARRIER;
+            if (!invert && fe->mask & mask & AE_READABLE) {
+                fe->rfileProc(eventLoop,fd,fe->clientData,mask);
+                fired++;
+                fe = &eventLoop->events[fd];
+            }
+
+            if (fe->mask & mask & AE_WRITABLE) {
+                //写事件
+                if (!fired || fe->wfileProc != fe->rfileProc) {
+                    fe->wfileProc(eventLoop,fd,fe->clientData,mask);
+                    fired++;
+                }
+            }
+
+            if (invert) {
+                //读事件
+                fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
+                if ((fe->mask & mask & AE_READABLE) &&
+                    (!fired || fe->wfileProc != fe->rfileProc))
+                {
+                    fe->rfileProc(eventLoop,fd,fe->clientData,mask);
+                    fired++;
+                }
+            }
+
+            processed++;
+        }
+    }
+     // 执行时间事件
+    if (flags & AE_TIME_EVENTS)
+        processed += processTimeEvents(eventLoop);
+
+    return processed; /* return the number of processed file/time events */
+}
+
+static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
+    // 事件状态数据
+    aeApiState *state = eventLoop->apidata;
+    int retval, numevents = 0;
+	// 监控是否有时间发生(epoll_wait 获取准备好的fd)
+    retval = epoll_wait(state->epfd,state->events,eventLoop->setsize,
+            tvp ? (tvp->tv_sec*1000 + tvp->tv_usec/1000) : -1);
+    if (retval > 0) {
+        int j;
+		// 就绪事件个数
+        numevents = retval;
+        for (j = 0; j < numevents; j++) {
+            int mask = 0;
+            // 描述符对应的事件
+            struct epoll_event *e = state->events+j;
+			// 将 epoll 事件状态转换为 aeEventLoop 对应的 mask 状态
+            if (e->events & EPOLLIN) mask |= AE_READABLE;
+            if (e->events & EPOLLOUT) mask |= AE_WRITABLE;
+            if (e->events & EPOLLERR) mask |= AE_WRITABLE|AE_READABLE;
+            if (e->events & EPOLLHUP) mask |= AE_WRITABLE|AE_READABLE;
+            // 添加到就绪事件表中
+            eventLoop->fired[j].fd = e->data.fd;
+            eventLoop->fired[j].mask = mask;
+        }
+    }
+    // 返回就绪事件个数
+    return numevents;
+}
+```
+
+#### 就绪事件处理：
+
+```C
+//TCP
+void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
+    int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
+    char cip[NET_IP_STR_LEN];
+    UNUSED(el);
+    UNUSED(mask);
+    UNUSED(privdata);
+	// 循环接受所有 TCP 连接
+    while(max--) {
+        // accept TCP 连接
+        cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
+        if (cfd == ANET_ERR) {
+            if (errno != EWOULDBLOCK)
+                serverLog(LL_WARNING,
+                    "Accepting client connection: %s", server.neterr);
+            return;
+        }
+        serverLog(LL_VERBOSE,"Accepted %s:%d", cip, cport);
+        // 初始化客户端连接操作
+        acceptCommonHandler(connCreateAcceptedSocket(cfd),0,cip);
     }
 }
 ```
