@@ -3236,11 +3236,13 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
     double curscore;
 
    	//分值不能超
+    //判断分值
     if (isnan(score)) {
         *flags = ZADD_NAN;
         return 0;
     }
 
+   	//若是ziplist
     if (zobj->encoding == OBJ_ENCODING_ZIPLIST) {
         //ziplist结构
         unsigned char *eptr;
@@ -4533,6 +4535,83 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         // 初始化客户端连接操作
         acceptCommonHandler(connCreateAcceptedSocket(cfd),0,cip);
     }
+}
+
+//时间事件
+static int processTimeEvents(aeEventLoop *eventLoop) {
+    int processed = 0;
+    aeTimeEvent *te;
+    long long maxId;
+    time_t now = time(NULL);
+
+    if (now < eventLoop->lastTime) {
+        te = eventLoop->timeEventHead;
+        while(te) {
+            te->when_sec = 0;
+            te = te->next;
+        }
+    }
+    // 设置上一次时间事件处理的时间为当前时间
+    eventLoop->lastTime = now;
+	// 遍历时间事件链表
+    te = eventLoop->timeEventHead;
+    // 最大的 时间事件 id
+    maxId = eventLoop->timeEventNextId-1;
+    while(te) {
+        long now_sec, now_ms;
+        long long id;
+
+        // 如果时间事件已经被删除，从链表中移除
+        if (te->id == AE_DELETED_EVENT_ID) {
+            aeTimeEvent *next = te->next;
+          	// 调用时间事件终结方法清除该事件
+            if (te->refcount) {
+                te = next;
+                continue;
+            }
+            if (te->prev)
+                te->prev->next = te->next;
+            else
+                eventLoop->timeEventHead = te->next;
+            if (te->next)
+                te->next->prev = te->prev;
+            if (te->finalizerProc)
+                te->finalizerProc(eventLoop, te->clientData);
+            zfree(te);
+            te = next;
+            continue;
+        }
+
+        // 如果当前 id 大于最大 id，忽略，因为我们插入事件的时候都是头插法
+        if (te->id > maxId) {
+            te = te->next;
+            continue;
+        }
+        // 获取当前时间
+        aeGetTime(&now_sec, &now_ms);
+         // 找到到期时间事件
+        if (now_sec > te->when_sec ||
+            (now_sec == te->when_sec && now_ms >= te->when_ms))
+        {
+            int retval;
+
+            id = te->id;
+            te->refcount++;
+            // 回调时间事件函数
+            retval = te->timeProc(eventLoop, id, te->clientData);
+            te->refcount--;
+            processed++;
+             // 如果不是定时事件，周期性继续循环
+            if (retval != AE_NOMORE) {
+                aeAddMillisecondsToNow(retval,&te->when_sec,&te->when_ms);
+            } else {
+                // 如果是定时事件，执行一次就可以删除了
+                te->id = AE_DELETED_EVENT_ID;
+            }
+        }
+        te = te->next;
+    }
+    return processed;
 }
 ```
 
