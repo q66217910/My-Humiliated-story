@@ -4619,3 +4619,56 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
 
 ## 8.Redis分布式
 
+```
+Sentinal：
+	用于高可用,matser节点宕机slave节点会自动提升为master
+Cluster:
+	用于可扩展,内存不足时会进行分片存储
+```
+
+#### Redis哈希槽：
+
+```C
+每个集群有16384个哈希槽,每个key通过CRC16 校验后对 16384 取模来决定放置哪个槽
+
+//对{}中内容进行CRC16算哈希槽
+static unsigned int clusterManagerKeyHashSlot(char *key, int keylen) {
+    int s, e; 
+    //寻找起始索引 {
+    for (s = 0; s < keylen; s++)
+        if (key[s] == '{') break;
+
+    //没找到{，返回key的crc16
+    if (s == keylen) return crc16(key,keylen) & 0x3FFF;
+
+   	//寻找结束索引}
+    for (e = s+1; e < keylen; e++)
+        if (key[e] == '}') break;
+
+    //没找到}或者，{}间没有内容
+    if (e == keylen || e == s+1) return crc16(key,keylen) & 0x3FFF;
+
+   	//用{}中的内容进行CRC16
+    return crc16(key+s+1,e-s-1) & 0x3FFF;
+}
+```
+
+
+
+## 9.Redis锁
+
+## 10.Redis事务
+
+## 11.Script与pipeline
+
+```
+pipeline：可以将多次IO缩减成1次
+```
+
+
+
+## 12.通信协议（protocol）
+
+## 13.Redis-Module
+
+RedisSearch(redis 全文搜索)、 BloomFilter、Redis-ML（机器学习）
