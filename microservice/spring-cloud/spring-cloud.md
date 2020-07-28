@@ -20,7 +20,7 @@
 
 ### 1-1.Eureka
 
-- Eureka server urls:
+- **Eureka server urls**:
 
   ```
   Region: 地理上的分区（例如华东/华南）
@@ -28,10 +28,157 @@
   
   配置:
   eureka.client.region: 配置eureka region
-  eureka.client.service-url.defaultZone:  使用默认ZONE地址
+  eureka.client.service-url.defaultZone:  使用默认ZONE地址(defaultZone更换可以配置不同zone)
   ```
 
-- 服务注册:
+  ```java
+  @ConfigurationProperties(EurekaClientConfigBean.PREFIX)
+  public class EurekaClientConfigBean implements EurekaClientConfig, Ordered {
+  	
+      private Map<String, String> serviceUrl = new HashMap<>();
+      
+      public static Map<String, List<String>> getServiceUrlsMapFromConfig(
+  			EurekaClientConfig clientConfig, String instanceZone, 
+          	boolean preferSameZone) {
+      Map<String, List<String>> orderedUrls = new LinkedHashMap<>();
+      //获取region
+      String region = getRegion(clientConfig);
+      //获取该region的zone
+      String[] availZones = clientConfig.getAvailabilityZones(clientConfig.getRegion());
+      if (availZones == null || availZones.length == 0) {
+          availZones = new String[1];
+          availZones[0] = DEFAULT_ZONE;
+      }
+  	//计算使用哪个zone
+      int myZoneOffset = getZoneOffset(instanceZone, preferSameZone, availZones);
+  
+      String zone = availZones[myZoneOffset];
+      //获取eureka集群地址
+      List<String> serviceUrls = clientConfig.getEurekaServerServiceUrls(zone);
+      if (serviceUrls != null) {
+          orderedUrls.put(zone, serviceUrls);
+      }
+  	//zone-eureke服务地址
+      return orderedUrls;
+  }
+      
+      //获取region(eureka.client.region)
+      public static String getRegion(EurekaClientConfig clientConfig) {
+          String region = clientConfig.getRegion();
+          if (region == null) {
+              region = DEFAULT_REGION;
+          }
+          region = region.trim().toLowerCase();
+          return region;
+   }
+      
+      //获取zone(eureka.client.availability-zones)
+      public String[] getAvailabilityZones(String region) {
+  		String value = this.availabilityZones.get(region);
+  		if (value == null) {
+  			value = DEFAULT_ZONE;
+  		}
+  		return value.split(",");
+  }
+      
+      @Override
+      //获取eureka集群地址(eureka.client.service-url)
+  	public List<String> getEurekaServerServiceUrls(String myZone) {
+  		String serviceUrls = this.serviceUrl.get(myZone);
+  		if (serviceUrls == null || serviceUrls.isEmpty()) {
+  			serviceUrls = this.serviceUrl.get(DEFAULT_ZONE);
+  		}
+  		if (!StringUtils.isEmpty(serviceUrls)) {
+  			final String[] serviceUrlsSplit = StringUtils
+  					.commaDelimitedListToStringArray(serviceUrls);
+  			List<String> eurekaServiceUrls = new ArrayList<>(serviceUrlsSplit.length);
+  			for (String eurekaServiceUrl : serviceUrlsSplit) {
+  				if (!endsWithSlash(eurekaServiceUrl)) {
+  					eurekaServiceUrl += "/";
+  				}
+  				eurekaServiceUrls.add(eurekaServiceUrl.trim());
+  			}
+  			return eurekaServiceUrls;
+  		}
+  		return new ArrayList<>();
+  	}
+  }
+  ```
+
+- **服务注册**：
+
+  ```java
+  public class DiscoveryClient implements EurekaClient {
+  	private void initScheduledTasks() {
+      
+      if (clientConfig.shouldRegisterWithEureka()) {
+          //...
+          // InstanceInfo replicator
+          instanceInfoReplicator = new InstanceInfoReplicator(
+                  this,
+                 instanceInfo,
+                  clientConfig.getInstanceInfoReplicationIntervalSeconds(),
+                  2); // burstSize
+          //...
+          instanceInfoReplicator.start(
+              clientConfig.getInitialInstanceInfoReplicationIntervalSeconds());
+      } else {
+          logger.info("Not registering with Eureka server per configuration");
+      	}
+  	}
+      
+      boolean register() throws Throwable {
+          EurekaHttpResponse<Void> httpResponse;
+          try {
+              httpResponse = eurekaTransport.registrationClient.register(instanceInfo);
+          } catch (Exception e) {
+              throw e;
+          }
+          return httpResponse.getStatusCode() == Status.NO_CONTENT.getStatusCode();
+      }
+  }
+  
+  class InstanceInfoReplicator implements Runnable {
+      
+      public void start(int initialDelayMs) {
+          //上锁,防止重复注册
+          if (started.compareAndSet(false, true)) {
+              //初始注册
+              instanceInfo.setIsDirty(); 
+              //默认40s后执行
+              Future next = scheduler.schedule(this, initialDelayMs, TimeUnit.SECONDS);
+              scheduledPeriodicRef.set(next);
+          }
+      }
+      
+      public void run() {
+          try {
+              //刷新本地InstanceInfo
+              discoveryClient.refreshInstanceInfo();
+  
+              //若上次执行已经被置脏了，则不执行
+              Long dirtyTimestamp = instanceInfo.isDirtyWithTime();
+              if (dirtyTimestamp != null) {
+                  //服务注册
+                  discoveryClient.register();
+                  //置脏
+                  instanceInfo.unsetIsDirty(dirtyTimestamp);
+              }
+          } catch (Throwable t) {
+              logger.warn("There was a problem with the instance info replicator", t);
+          } finally {
+              //若注册失败，则延迟后重新服务
+              Future next = scheduler.schedule(this, 
+                          replicationIntervalSeconds,TimeUnit.SECONDS);
+              scheduledPeriodicRef.set(next);
+          }
+      }
+  }
+  ```
+
+  
+
+- **心跳**:
 
   客户端：
 
