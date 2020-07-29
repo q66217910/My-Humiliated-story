@@ -25,14 +25,27 @@
   ```java
   public class InstanceInfo {
       
-      //用于指定实例属于哪个数据中心(eureka.instance.data-center-info)	
+      //用于指定实例属于哪个数据中心(eureka.instance.data-center-info)
+      //Netflix, Amazon, MyOwn三个类型，默认MyOwn
+      //作用：例如要在上部署Eureka需要Amazon识别
       private volatile DataCenterInfo dataCenterInfo;
       //(eureka.instance.data-center-hostname)	
-      private volatile String hostName;
+    private volatile String hostName;
       //1.在appName范围内唯一值,配置(eureka.instance.instance-id)
-    //2.没有配置instance.instance-id时若dataCenterInfo实现了UniqueIdentifier,调用getName
+      //2.没有配置instance.instance-id时若dataCenterInfo实现了UniqueIdentifier,调用getName
       //3.都没有返回hostName
+      //因为server缓存是个三级的Map,所以要保证appName范围内instanceId唯一
       private volatile String instanceId;
+      //ip 地址
+      private volatile String ipAddr;
+      //application的名称(spring.application.name)
+      private volatile String appName;
+     	//实例状态（UP:准备接受流量  DOWN:停止运行 STARTING:初始化中 OUT_OF_SERVICE:关闭流量）
+      private volatile InstanceStatus overriddenStatus = InstanceStatus.UNKNOWN;
+      //实例的操作(ADDED: 实例新增  MODIFIED:更新  DELETED:实例移除)
+      private volatile ActionType actionType;
+      //上次操作时间戳
+      private volatile Long lastUpdatedTimestamp;
   }
   ```
   
@@ -138,13 +151,13 @@
       
       if (clientConfig.shouldRegisterWithEureka()) {
           //...
-          // InstanceInfo replicator
+          //服务注册
           instanceInfoReplicator = new InstanceInfoReplicator(
                   this,
                  instanceInfo,
                   clientConfig.getInstanceInfoReplicationIntervalSeconds(),
-                  2); // burstSize
-          //...
+                  2);
+          //服务注册开始
           instanceInfoReplicator.start(
               clientConfig.getInitialInstanceInfoReplicationIntervalSeconds());
       } else {
@@ -211,6 +224,7 @@
           try {
               Builder resourceBuilder = jerseyClient.resource(serviceUrl)
                   .path(urlPath).getRequestBuilder();
+              //添加服务注册头标识
               addExtraHeaders(resourceBuilder);
               response = resourceBuilder
                       .header("Accept-Encoding", "gzip")
@@ -224,6 +238,11 @@
                   response.close();
               }
           }
+      }
+      
+      @Override
+      protected void addExtraHeaders(Builder webResource) {
+          webResource.header(PeerEurekaNode.HEADER_REPLICATION, "true");
       }
       
   }
@@ -280,16 +299,64 @@
               }
           }
   
+          //服务注册
           registry.register(info, "true".equals(isReplication));
           return Response.status(204).build();  // 204 to be backwards compatible
-      }
+      } 
+  }
+  
+  public static final int DEFAULT_DURATION_IN_SECS = 90;
+  
+  @Singleton
+  public class PeerAwareInstanceRegistryImpl extends AbstractInstanceRegistry 
+      implements PeerAwareInstanceRegistry {
       
+      @Override
+      public void register(final InstanceInfo info, final boolean isReplication) {
+          //默认续期时间
+          int leaseDuration = Lease.DEFAULT_DURATION_IN_SECS;
+          //因为是注册,所以不执行续期相关
+          if (info.getLeaseInfo() != null 
+              && info.getLeaseInfo().getDurationInSecs() > 0) {
+              leaseDuration = info.getLeaseInfo().getDurationInSecs();
+          }
+          //注册
+          super.register(info, leaseDuration, isReplication);
+          //同步到集群其他节点
+          replicateToPeers(Action.Register, info.getAppName(),
+                           info.getId(), info, null, isReplication);
+      }
   }
   ```
 
-  
-
 - **心跳**:
+
+  续期对象：
+
+  ```java
+  public class Lease<T> {
+      private T holder;
+      private long evictionTimestamp;
+      private long registrationTimestamp;
+      //实例开始成功运行时间
+      private long serviceUpTimestamp;
+      //上一次调用时间
+      private volatile long lastUpdateTimestamp;
+      private long duration;
+  }
+  
+  public class LeaseInfo {
+  
+      private long registrationTimestamp;
+      //上次续约时间
+      private long lastRenewalTimestamp;
+      
+      private long evictionTimestamp;
+      //实例开始成功运行时间
+      private long serviceUpTimestamp;
+      
+  }
+  ```
 
   客户端：
 
@@ -387,7 +454,7 @@
           String urlPath = "apps/" + appName + '/' + id;
           ClientResponse response = null;
           try {
-              //
+              //心跳请求
               WebResource webResource = jerseyClient.resource(serviceUrl)
                       .path(urlPath)
                       .queryParam("status", info.getStatus().toString())
@@ -414,4 +481,142 @@
 
   
 
-- 
+- **DataCenterInfo(数据中心)**
+
+- **Eureka-Server的注册与续期(三级缓存)**
+
+  ```java
+  public abstract class AbstractInstanceRegistry implements InstanceRegistry {
+  	
+      //读写锁
+      private final ReentrantReadWriteLock readWriteLock = new ReentrantReadWriteLock();
+      private final Lock read = readWriteLock.readLock();
+      private final Lock write = readWriteLock.writeLock();
+      
+      //appName-instanceId-Lease<InstanceInfo>
+      private final ConcurrentHashMap<String, Map<String, Lease<InstanceInfo>>> registry
+              = new ConcurrentHashMap<String, Map<String, Lease<InstanceInfo>>>();
+      //guava缓存(存储instanceId-InstanceStatus)，每一个实例的状态，每个小时过期
+      protected final ConcurrentMap<String, InstanceStatus> 
+          overriddenInstanceStatusMap = CacheBuilder
+              .newBuilder().initialCapacity(500)
+              .expireAfterAccess(1, TimeUnit.HOURS)
+              .<String, InstanceStatus>build().asMap();
+      
+     //续约状态规则(默认FirstMatchWinsCompositeRule,
+     //即先检查当前是STARTING或者DOWN,再检查可能存在的状态)
+     private final InstanceStatusOverrideRule instanceStatusOverrideRule;
+      
+      public void register(InstanceInfo registrant, 
+                       int leaseDuration, boolean isReplication) {
+   	try {
+          //上读锁防止重复注册
+      	read.lock();
+          //获取appName的续期
+      	Map<String, Lease<InstanceInfo>> gMap = registry.get(registrant.getAppName());
+      	//注册计数
+          REGISTER.increment(isReplication);
+          if (gMap == null) {
+              //获取
+          	final ConcurrentHashMap<String, Lease<InstanceInfo>> gNewMap 
+                  = new ConcurrentHashMap<String, Lease<InstanceInfo>>();
+              gMap = registry.putIfAbsent(registrant.getAppName(), gNewMap);
+              if (gMap == null) {
+                 gMap = gNewMap;     
+              }
+          }
+          //获取具体instanceId的续期
+         	Lease<InstanceInfo> existingLease = gMap.get(registrant.getId());  
+          //如果已经存在续期
+        	if (existingLease != null && (existingLease.getHolder() != null)) {
+           	//传上来的续约时间
+           	Long existingLastDirtyTimestamp = existingLease.getHolder()
+               .getLastDirtyTimestamp();
+          	 //获取上次调用时间
+          	Long registrationLastDirtyTimestamp = registrant.getLastDirtyTimestamp();
+           	//比上一次续约时间大
+              if (existingLastDirtyTimestamp > registrationLastDirtyTimestamp) {
+               	//更新租约
+                  registrant = existingLease.getHolder();
+               }
+           } else {
+              //还没有租约，说明是新注册
+              synchronized (lock) {
+                if (this.expectedNumberOfClientsSendingRenews > 0) {
+                   //新客户端注册，增加客户端续约数量
+          		this.expectedNumberOfClientsSendingRenews = 												this.expectedNumberOfClientsSendingRenews + 1;
+                   //更新
+                  updateRenewsPerMinThreshold();
+               }
+           }
+                
+    		}
+        //新建租约
+        Lease<InstanceInfo> lease = new Lease<InstanceInfo>(registrant, leaseDuration);
+        if (existingLease != null) {
+             //更新租约时间
+            lease.setServiceUpTimestamp(existingLease.getServiceUpTimestamp());
+        }
+        //保存
+        gMap.put(registrant.getId(), lease);
+        //对统计队列上锁
+        synchronized (recentRegisteredQueue) {
+           //添加到队列
+           recentRegisteredQueue.add(new Pair<Long, String>(
+            System.currentTimeMillis(),
+               registrant.getAppName() + "(" + registrant.getId() + ")"));
+        }      
+        //上传的状态不是UNKNOWN状态 && 状态缓存中没有  
+        if (!InstanceStatus.UNKNOWN.equals(registrant.getOverriddenStatus())) 
+            if (!overriddenInstanceStatusMap.containsKey(registrant.getId())) {
+              //状态缓存存储一份
+          	overriddenInstanceStatusMap.put(
+                  registrant.getId(), registrant.getOverriddenStatus());
+              }
+       }
+       //获取实例的状态
+       InstanceStatus overriddenStatusFromMap 
+            =overriddenInstanceStatusMap.get(registrant.getId());
+       //若为UNKNOWN使用前一个的状态的意思
+       if (overriddenStatusFromMap != null) {
+           //若当前实例状态不为null,设置当前实例要覆盖的状态为此状态
+           registrant.setOverriddenStatus(overriddenStatusFromMap);
+       }
+       //根据规则设置状态
+  	 InstanceStatus overriddenInstanceStatus = 
+          getOverriddenInstanceStatus(registrant, existingLease, isReplication);
+       //设置状态
+       registrant.setStatusWithoutDirty(overriddenInstanceStatus);
+  	 if (InstanceStatus.UP.equals(registrant.getStatus())) {
+            //如果服务状态是运行,将实例开始运行时间更新为当前时间
+           lease.serviceUp();
+       }
+       //将操作设置为新增
+       registrant.setActionType(ActionType.ADDED);
+       //统计队列
+       recentlyChangedQueue.add(new RecentlyChangedItem(lease));
+       //更新上次更新时间
+       registrant.setLastUpdatedTimestamp();
+       //无效特定缓存
+       invalidateCache(registrant.getAppName(),
+           registrant.getVIPAddress(),registrant.getSecureVipAddress());
+      } finally {
+         //释放锁
+         read.unlock();
+      }
+    }
+      
+      //计算续约频率
+      //续约客户端数*(60/预期客户端续约间隔时间)*续约百分比
+      protected void updateRenewsPerMinThreshold() {
+   //预期客户端续约间隔时间:(eureka.server.expected-client-renewal-interval-seconds,默认30s)
+   //续约百分比:(eureka.server.renewal-percent-threshold,默认0.85)
+        this.numberOfRenewsPerMinThreshold = 
+            (int) (this.expectedNumberOfClientsSendingRenews
+                  * (60.0 / serverConfig.getExpectedClientRenewalIntervalSeconds())
+                  * serverConfig.getRenewalPercentThreshold());
+      }
+  }
+  ```
+
+  
