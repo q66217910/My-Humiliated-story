@@ -241,6 +241,7 @@
       }
       
       @Override
+      //增加注册头信息
       protected void addExtraHeaders(Builder webResource) {
           webResource.header(PeerEurekaNode.HEADER_REPLICATION, "true");
       }
@@ -360,6 +361,8 @@
 
   客户端：
 
+  
+
   ```java
   @Singleton
   public class DiscoveryClient implements EurekaClient {
@@ -372,6 +375,7 @@
           //定时任务线程池
           //1.心跳定时
        	//2.缓存定时
+          //3.服务注册
           scheduler = Executors.newScheduledThreadPool(2,
                       new ThreadFactoryBuilder()
                               .setNameFormat("DiscoveryClient-%d")
@@ -425,7 +429,9 @@
           EurekaHttpResponse<InstanceInfo> httpResponse;
           try {
               //发送心跳
-              httpResponse = eurekaTransport.registrationClient.sendHeartBeat(instanceInfo.getAppName(), instanceInfo.getId(), instanceInfo, null);
+              httpResponse = eurekaTransport.registrationClient
+                  .sendHeartBeat(instanceInfo.getAppName(),
+                                 instanceInfo.getId(), instanceInfo, null);
               //eureka服务端404
               if (httpResponse.getStatusCode() == 404) {
                   //心跳计数器
@@ -446,36 +452,84 @@
       }
   }
                                                      
-  public class AbstractJerseyEurekaHttpClient implements EurekaHttpClient {
+  public class RestTemplateEurekaHttpClient implements EurekaHttpClient {
       
       @Override
       public EurekaHttpResponse<InstanceInfo> sendHeartBeat(String appName, String id, InstanceInfo info, InstanceStatus overriddenStatus) {
-          //拼接自身服务地址
-          String urlPath = "apps/" + appName + '/' + id;
-          ClientResponse response = null;
-          try {
-              //心跳请求
-              WebResource webResource = jerseyClient.resource(serviceUrl)
-                      .path(urlPath)
-                      .queryParam("status", info.getStatus().toString())
-                      .queryParam("lastDirtyTimestamp", info.getLastDirtyTimestamp().toString());
-              if (overriddenStatus != null) {
-                  webResource = webResource.queryParam("overriddenstatus", overriddenStatus.name());
-              }
-              Builder requestBuilder = webResource.getRequestBuilder();
-              addExtraHeaders(requestBuilder);
-              response = requestBuilder.put(ClientResponse.class);
-              EurekaHttpResponseBuilder<InstanceInfo> eurekaResponseBuilder = anEurekaHttpResponse(response.getStatus(), InstanceInfo.class).headers(headersOf(response));
-              if (response.hasEntity()) {
-                  eurekaResponseBuilder.entity(response.getEntity(InstanceInfo.class));
-              }
-              return eurekaResponseBuilder.build();
-          } finally {
-              if (response != null) {
-                  response.close();
-              }
-          }
+          String urlPath = serviceUrl + "apps/" + appName + '/' + id + "?status="
+  				+ info.getStatus().toString() + "&lastDirtyTimestamp="
+  				+ info.getLastDirtyTimestamp().toString() + (overriddenStatus != null
+  						? "&overriddenstatus=" + overriddenStatus.name() : "");
+  
+  		ResponseEntity<InstanceInfo> response = restTemplate.exchange(urlPath,
+  				HttpMethod.PUT, null, InstanceInfo.class);
+  
+  		EurekaHttpResponseBuilder<InstanceInfo> eurekaResponseBuilder = anEurekaHttpResponse(
+  				response.getStatusCodeValue(), InstanceInfo.class)
+  						.headers(headersOf(response));
+  
+  		if (response.hasBody()) {
+  			eurekaResponseBuilder.entity(response.getBody());
+  		}
+  
+  		return eurekaResponseBuilder.build();
       }
+  }
+  ```
+
+  服务端：
+
+  ```java
+  @PUT
+  public Response renewLease(
+              @HeaderParam(PeerEurekaNode.HEADER_REPLICATION) String isReplication,
+              @QueryParam("overriddenstatus") String overriddenStatus,
+              @QueryParam("status") String status,
+              @QueryParam("lastDirtyTimestamp") String lastDirtyTimestamp) {
+      	//是否是服务注册
+          boolean isFromReplicaNode = "true".equals(isReplication);
+      	//续期
+          boolean isSuccess = registry.renew(app.getName(), id, isFromReplicaNode);
+  
+          //续期失败
+          if (!isSuccess) {
+              return Response.status(Status.NOT_FOUND).build();
+          }
+         
+          Response response;
+      	//检查时间防止实例已经发生改变
+          if (lastDirtyTimestamp != null 
+              && 	serverConfig.shouldSyncWhenTimestampDiffers()) {
+              response = this.validateDirtyTimestamp
+                  (Long.valueOf(lastDirtyTimestamp), isFromReplicaNode);
+              if (response.getStatus() == Response.Status.NOT_FOUND.getStatusCode()
+                      && (overriddenStatus != null)
+                      && !(InstanceStatus.UNKNOWN.name().equals(overriddenStatus))
+                      && isFromReplicaNode) {
+                  registry.storeOverriddenStatusIfRequired(
+                      app.getAppName(), id, InstanceStatus.valueOf(overriddenStatus));
+              }
+          } else {
+              response = Response.ok().build();
+          }
+          return response;
+  }
+  
+  public abstract class AbstractInstanceRegistry implements InstanceRegistry {
+      @Override
+    public void storeOverriddenStatusIfRequired(
+        String appName, String id, InstanceStatus overriddenStatus) {
+        //获取实例的状态
+        InstanceStatus instanceStatus = overriddenInstanceStatusMap.get(id);
+        if ((instanceStatus == null) || (!overriddenStatus.equals(instanceStatus))) {
+          //缓存存储
+          overriddenInstanceStatusMap.put(id, overriddenStatus);
+          //获取注册存储的元数据
+          InstanceInfo instanceInfo = this.getInstanceByAppAndId(appName, id, false);
+          //设置实例的状态
+          instanceInfo.setOverriddenStatus(overriddenStatus);
+      }
+    }
   }
   ```
 
@@ -619,4 +673,128 @@
   }
   ```
 
-  
+- **获取注册表**
+
+```java
+@Singleton
+public class DiscoveryClient implements EurekaClient {
+    @Inject
+    DiscoveryClient(ApplicationInfoManager applicationInfoManager, 
+                    EurekaClientConfig config, AbstractDiscoveryClientOptionalArgs args,
+                    Provider<BackupRegistry> backupRegistryProvider,
+                    EndpointRandomizer endpointRandomizer) {
+       //注册获取线程池
+       cacheRefreshExecutor = new ThreadPoolExecutor(
+                    1, clientConfig
+           .getCacheRefreshExecutorThreadPoolSize(), 0, TimeUnit.SECONDS,
+                    new SynchronousQueue<Runnable>(),
+                    new ThreadFactoryBuilder()
+                            .setNameFormat("DiscoveryClient-CacheRefreshExecutor-%d")
+                            .setDaemon(true)
+                            .build()  
+    }
+           
+    private void initScheduledTasks() {
+        if (clientConfig.shouldFetchRegistry()) {
+          	//registry-fetch-interval-seconds(默认30s)
+            int registryFetchIntervalSeconds = clientConfig
+                .getRegistryFetchIntervalSeconds();
+            int expBackOffBound = clientConfig
+                .getCacheRefreshExecutorExponentialBackOffBound();
+            scheduler.schedule(
+                    new TimedSupervisorTask(
+                            "cacheRefresh",
+                            scheduler,
+                            cacheRefreshExecutor,
+                            registryFetchIntervalSeconds,
+                            TimeUnit.SECONDS,
+                            expBackOffBound,
+                            new CacheRefreshThread()
+                    ),
+                    registryFetchIntervalSeconds, TimeUnit.SECONDS);
+        }
+    }
+}
+           
+class CacheRefreshThread implements Runnable {
+    @VisibleForTesting
+    void refreshRegistry() {
+        try {
+  //是否立即获取
+  boolean isFetchingRemoteRegionRegistries = isFetchingRemoteRegionRegistries();
+  boolean remoteRegionsModified = false;
+  //配置（fetch-remote-regions-registry）动态region
+  String latestRemoteRegions = clientConfig.fetchRegistryForRemoteRegions();
+  if (null != latestRemoteRegions) {
+     //获取当前region
+     String currentRemoteRegions = remoteRegionsToFetch.get();
+    if (!latestRemoteRegions.equals(currentRemoteRegions)) {
+        //若region不同
+     synchronized (instanceRegionChecker.getAzToRegionMapper()) {
+   	 if (remoteRegionsToFetch.compareAndSet(currentRemoteRegions, latestRemoteRegions)) {
+       //分割配置的region
+       String[] remoteRegions = latestRemoteRegions.split(",");
+       remoteRegionsRef.set(remoteRegions);
+       instanceRegionChecker.getAzToRegionMapper().setRegionsToFetch(remoteRegions);
+        remoteRegionsModified = true;
+  	  } 
+    }
+   } else {
+     instanceRegionChecker.getAzToRegionMapper().refreshMapping();
+       }
+    }
+	//拉取注册表
+    boolean success = fetchRegistry(remoteRegionsModified);
+    if (success) {
+       registrySize = localRegionApps.get().size();
+       lastSuccessfulRegistryFetchTimestamp = System.currentTimeMillis();
+    }
+
+   } catch (Throwable e) {
+    logger.error("Cannot fetch registry from server", e);
+     }
+ }
+}
+           
+private boolean fetchRegistry(boolean forceFullRegistryFetch) {
+        Stopwatch tracer = FETCH_REGISTRY_TIMER.start();
+
+        try {
+            // If the delta is disabled or if it is the first time, get all
+            // applications
+            Applications applications = getApplications();
+
+            if (clientConfig.shouldDisableDelta()
+                    || (!Strings.isNullOrEmpty(clientConfig.getRegistryRefreshSingleVipAddress()))
+                    || forceFullRegistryFetch
+                    || (applications == null)
+                    || (applications.getRegisteredApplications().size() == 0)
+                    || (applications.getVersion() == -1)) //Client application does not have latest library supporting delta
+            {
+              	//全量拉取
+                getAndStoreFullRegistry();
+            } else {
+                //增量拉取
+                getAndUpdateDelta(applications);
+            }
+            applications.setAppsHashCode(applications.getReconcileHashCode());
+            logTotalInstances();
+        } catch (Throwable e) {
+            return false;
+        } finally {
+            if (tracer != null) {
+                tracer.stop();
+            }
+        }
+
+        //发出缓存更新通知
+        onCacheRefreshed();
+
+        //更新本地数据元
+        updateInstanceRemoteStatus();
+
+        //拉取成功
+        return true;
+    }
+```
+
