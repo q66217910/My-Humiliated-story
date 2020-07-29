@@ -20,6 +20,22 @@
 
 ### 1-1.Eureka
 
+- **Eureka InstanceInfo(元数据)**
+
+  ```java
+  public class InstanceInfo {
+      
+      //用于指定实例属于哪个数据中心(eureka.instance.data-center-info)	
+      private volatile DataCenterInfo dataCenterInfo;
+      //(eureka.instance.data-center-hostname)	
+      private volatile String hostName;
+      //1.在appName范围内唯一值,配置(eureka.instance.instance-id)
+    //2.没有配置instance.instance-id时若dataCenterInfo实现了UniqueIdentifier,调用getName
+      //3.都没有返回hostName
+      private volatile String instanceId;
+  }
+  ```
+  
 - **Eureka server urls**:
 
   ```
@@ -107,8 +123,17 @@
 
 - **服务注册**：
 
+  客户端：
+
+  ​	第一次延迟(eureka.client.initial-instance-info-replication-interval-seconds,默认40s)，如果注册失败，
+
+  ​	则每隔(eureka.client.instance-info-replication-interval-seconds,默认30s)进行重注册
+
   ```java
   public class DiscoveryClient implements EurekaClient {
+      
+      private int initialInstanceInfoReplicationIntervalSeconds = 40;
+      
   	private void initScheduledTasks() {
       
       if (clientConfig.shouldRegisterWithEureka()) {
@@ -127,6 +152,7 @@
       	}
   	}
       
+      //注册
       boolean register() throws Throwable {
           EurekaHttpResponse<Void> httpResponse;
           try {
@@ -173,6 +199,91 @@
               scheduledPeriodicRef.set(next);
           }
       }
+  }
+  
+  public abstract class AbstractJerseyEurekaHttpClient implements EurekaHttpClient {
+      
+      @Override
+      public EurekaHttpResponse<Void> register(InstanceInfo info) {
+          //注册地址
+          String urlPath = "apps/" + info.getAppName();
+          ClientResponse response = null;
+          try {
+              Builder resourceBuilder = jerseyClient.resource(serviceUrl)
+                  .path(urlPath).getRequestBuilder();
+              addExtraHeaders(resourceBuilder);
+              response = resourceBuilder
+                      .header("Accept-Encoding", "gzip")
+                      .type(MediaType.APPLICATION_JSON_TYPE)
+                      .accept(MediaType.APPLICATION_JSON)
+                      .post(ClientResponse.class, info);
+              return anEurekaHttpResponse(response.getStatus())
+                  .headers(headersOf(response)).build();
+          } finally {
+              if (response != null) {
+                  response.close();
+              }
+          }
+      }
+      
+  }
+  ```
+
+  服务端：
+
+  ```java
+  public class ApplicationResource {
+  
+      @POST
+      @Consumes({"application/json", "application/xml"})
+      public Response addInstance(InstanceInfo info,
+                                  @HeaderParam(PeerEurekaNode.HEADER_REPLICATION) String isReplication) {
+          //检验元数据
+          if (isBlank(info.getId())) {
+              return Response.status(400).entity("Missing instanceId").build();
+          } else if (isBlank(info.getHostName())) {
+              return Response.status(400).entity("Missing hostname").build();
+          } else if (isBlank(info.getIPAddr())) {
+              return Response.status(400).entity("Missing ip address").build();
+          } else if (isBlank(info.getAppName())) {
+              return Response.status(400).entity("Missing appName").build();
+          } else if (!appName.equals(info.getAppName())) {
+              return Response.status(400).entity("Mismatched appName, expecting " + appName + " but was " + info.getAppName()).build();
+          } else if (info.getDataCenterInfo() == null) {
+              return Response.status(400).entity("Missing dataCenterInfo").build();
+          } else if (info.getDataCenterInfo().getName() == null) {
+              return Response.status(400).entity("Missing dataCenterInfo Name").build();
+          }
+  
+          //获取数据中心数据
+          DataCenterInfo dataCenterInfo = info.getDataCenterInfo();
+          if (dataCenterInfo instanceof UniqueIdentifier) {
+              String dataCenterInfoId = ((UniqueIdentifier) dataCenterInfo).getId();
+              if (isBlank(dataCenterInfoId)) {
+                  boolean experimental = "true"
+                      .equalsIgnoreCase(serverConfig.getExperimental(
+                          "registration.validation.dataCenterInfoId"));
+                  if (experimental) {
+                      String entity = "DataCenterInfo of type " + dataCenterInfo
+                          .getClass() + " must contain a valid id";
+                      return Response.status(400).entity(entity).build();
+                  } else if (dataCenterInfo instanceof AmazonInfo) {
+                      AmazonInfo amazonInfo = (AmazonInfo) dataCenterInfo;
+                      String effectiveId = amazonInfo
+                          .get(AmazonInfo.MetaDataKey.instanceId);
+                      if (effectiveId == null) {
+                          amazonInfo.getMetadata()
+                              .put(AmazonInfo.MetaDataKey
+                                   .instanceId.getName(), info.getId());
+                      }
+                  }
+              }
+          }
+  
+          registry.register(info, "true".equals(isReplication));
+          return Response.status(204).build();  // 204 to be backwards compatible
+      }
+      
   }
   ```
 
