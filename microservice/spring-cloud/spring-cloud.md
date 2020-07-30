@@ -134,6 +134,170 @@
   }
   ```
 
+- **HttpClient**
+
+  Eureka的httpClient调用链
+
+  ```
+1.SessionedEurekaHttpClient: 每隔一段时间重新建立会话
+  2.RetryableEurekaHttpClient: 失败重试，尝试所有服务端地址，直至所有的都失败
+3.RedirectingEurekaHttpClient: 重定向，例如注册与查询分离
+  4.AbstractJerseyEurekaHttpClient(默认)：具体请求
+  4-1.RestTemplateHttpClient: rest风格
+  ```
+  
+  ```java
+  public final class EurekaHttpClients {
+      
+      static EurekaHttpClientFactory canonicalClientFactory(final String name,
+                        final EurekaTransportConfig transportConfig,
+                        final ClusterResolver<EurekaEndpoint> clusterResolver,
+                        final TransportClientFactory transportClientFactory) {
+          return new EurekaHttpClientFactory() {
+              @Override
+              public EurekaHttpClient newClient() {
+                  return new SessionedEurekaHttpClient(
+                          name,
+                          RetryableEurekaHttpClient.createFactory(
+                                  name,
+                                  transportConfig,
+                                  clusterResolver,
+                                  RedirectingEurekaHttpClient
+                              .createFactory(transportClientFactory),
+                                  ServerStatusEvaluators.legacyEvaluator()),
+                          transportConfig
+                      .getSessionedClientReconnectIntervalSeconds() * 1000
+                  );
+              }
+  
+              @Override
+              public void shutdown() {
+                  wrapClosable(clusterResolver).shutdown();
+              }
+          };
+      }   
+  }
+  
+  public class SessionedEurekaHttpClient extends EurekaHttpClientDecorator {
+      
+      @Override
+      protected <R> EurekaHttpResponse<R> execute(RequestExecutor<R> requestExecutor) {
+          long now = System.currentTimeMillis();
+          long delay = now - lastReconnectTimeStamp;
+          if (delay >= currentSessionDurationMs) {
+           	//超过设置时间(默认2小时)
+              lastReconnectTimeStamp = now;
+              //重新设置过期时间，会随机，防止同一时间一起过期
+              currentSessionDurationMs = randomizeSessionDuration(sessionDurationMs);
+              //shutdown
+              TransportUtils.shutdown(eurekaHttpClientRef.getAndSet(null));
+          }
+  
+          EurekaHttpClient eurekaHttpClient = eurekaHttpClientRef.get();
+          if (eurekaHttpClient == null) {
+              //重新创建连接
+              eurekaHttpClient = TransportUtils
+                  .getOrSetAnotherClient(eurekaHttpClientRef, clientFactory
+                                         .newClient());
+          }
+          return requestExecutor.execute(eurekaHttpClient);
+      }
+  }
+  
+  public class RetryableEurekaHttpClient extends EurekaHttpClientDecorator {
+      
+      @Override
+      protected <R> EurekaHttpResponse<R> execute(RequestExecutor<R> requestExecutor) {
+          List<EurekaEndpoint> candidateHosts = null;
+          int endpointIdx = 0;
+          //最大重试次数
+          for (int retry = 0; retry < numberOfRetries; retry++) {
+              EurekaHttpClient currentHttpClient = delegate.get();
+              EurekaEndpoint currentEndpoint = null;
+              if (currentHttpClient == null) {
+                  //没有配置service url
+                  if (candidateHosts == null) {
+                      candidateHosts = getHostCandidates();
+                      if (candidateHosts.isEmpty()) {
+                          throw new TransportException("cluster server list is empty");
+                      }
+                  }
+                  if (endpointIdx >= candidateHosts.size()) {
+                      throw new TransportException("Cannot execute request");
+                  }
+  
+                  //获取节点
+                  currentEndpoint = candidateHosts.get(endpointIdx++);
+                  //创建下一个HttpClient
+                  currentHttpClient = clientFactory.newClient(currentEndpoint);
+              }
+  
+              try {
+                  //发送请求
+                  EurekaHttpResponse<R> response = requestExecutor
+                      .execute(currentHttpClient);
+                  if (serverStatusEvaluator.accept(response.getStatusCode(), 	requestExecutor.getRequestType())) {
+                      delegate.set(currentHttpClient);
+                      if (retry > 0) {
+                          logger.info("Request execution succeeded on retry #{}", retry);
+                      }
+                      return response;
+                  }
+              } catch (Exception e) {
+  
+              }
+              delegate.compareAndSet(currentHttpClient, null);
+              if (currentEndpoint != null) {
+                quarantineSet.add(currentEndpoint);
+              }
+        }
+          throw new TransportException("Retry limit reached");
+      }
+      
+  }
+  
+  public class RedirectingEurekaHttpClient extends EurekaHttpClientDecorator {
+      
+      @Override
+      protected <R> EurekaHttpResponse<R> execute(RequestExecutor<R> requestExecutor) {
+          EurekaHttpClient currentEurekaClient = delegateRef.get();
+          if (currentEurekaClient == null) {
+              AtomicReference<EurekaHttpClient> currentEurekaClientRef = new AtomicReference<>(factory.newClient(serviceEndpoint));
+              try {
+                  EurekaHttpResponse<R> response = executeOnNewServer(requestExecutor, currentEurekaClientRef);
+                  TransportUtils.shutdown(delegateRef.getAndSet(currentEurekaClientRef.get()));
+                  return response;
+              } catch (Exception e) {
+                  logger.error("Request execution error", e);
+                  TransportUtils.shutdown(currentEurekaClientRef.get());
+                  throw e;
+              }
+          } else {
+              try {
+                  return requestExecutor.execute(currentEurekaClient);
+              } catch (Exception e) {
+                  logger.error("Request execution error", e);
+                  delegateRef.compareAndSet(currentEurekaClient, null);
+                  currentEurekaClient.shutdown();
+                  throw e;
+              }
+          }
+      }
+      
+  }
+  
+  @Configuration
+  //指定使用RestTemplateHttpClient
+  public class EurekaConfig {
+  
+      @Bean
+      public AbstractDiscoveryClientOptionalArgs<?> optionalArgs() {
+          return new RestTemplateDiscoveryClientOptionalArgs();
+      }
+  
+  }
+  ```
+  
 - **服务注册**：
 
   客户端：
@@ -675,126 +839,189 @@
 
 - **获取注册表**
 
-```java
-@Singleton
-public class DiscoveryClient implements EurekaClient {
-    @Inject
-    DiscoveryClient(ApplicationInfoManager applicationInfoManager, 
-                    EurekaClientConfig config, AbstractDiscoveryClientOptionalArgs args,
-                    Provider<BackupRegistry> backupRegistryProvider,
-                    EndpointRandomizer endpointRandomizer) {
-       //注册获取线程池
-       cacheRefreshExecutor = new ThreadPoolExecutor(
-                    1, clientConfig
-           .getCacheRefreshExecutorThreadPoolSize(), 0, TimeUnit.SECONDS,
-                    new SynchronousQueue<Runnable>(),
-                    new ThreadFactoryBuilder()
-                            .setNameFormat("DiscoveryClient-CacheRefreshExecutor-%d")
-                            .setDaemon(true)
-                            .build()  
-    }
-           
-    private void initScheduledTasks() {
-        if (clientConfig.shouldFetchRegistry()) {
-          	//registry-fetch-interval-seconds(默认30s)
-            int registryFetchIntervalSeconds = clientConfig
-                .getRegistryFetchIntervalSeconds();
-            int expBackOffBound = clientConfig
-                .getCacheRefreshExecutorExponentialBackOffBound();
-            scheduler.schedule(
-                    new TimedSupervisorTask(
-                            "cacheRefresh",
-                            scheduler,
-                            cacheRefreshExecutor,
-                            registryFetchIntervalSeconds,
-                            TimeUnit.SECONDS,
-                            expBackOffBound,
-                            new CacheRefreshThread()
-                    ),
-                    registryFetchIntervalSeconds, TimeUnit.SECONDS);
-        }
-    }
-}
-           
-class CacheRefreshThread implements Runnable {
-    @VisibleForTesting
-    void refreshRegistry() {
-        try {
-  //是否立即获取
-  boolean isFetchingRemoteRegionRegistries = isFetchingRemoteRegionRegistries();
-  boolean remoteRegionsModified = false;
-  //配置（fetch-remote-regions-registry）动态region
-  String latestRemoteRegions = clientConfig.fetchRegistryForRemoteRegions();
-  if (null != latestRemoteRegions) {
-     //获取当前region
-     String currentRemoteRegions = remoteRegionsToFetch.get();
-    if (!latestRemoteRegions.equals(currentRemoteRegions)) {
-        //若region不同
-     synchronized (instanceRegionChecker.getAzToRegionMapper()) {
-   	 if (remoteRegionsToFetch.compareAndSet(currentRemoteRegions, latestRemoteRegions)) {
-       //分割配置的region
-       String[] remoteRegions = latestRemoteRegions.split(",");
-       remoteRegionsRef.set(remoteRegions);
-       instanceRegionChecker.getAzToRegionMapper().setRegionsToFetch(remoteRegions);
-        remoteRegionsModified = true;
-  	  } 
-    }
-   } else {
-     instanceRegionChecker.getAzToRegionMapper().refreshMapping();
+  客户端
+
+  ```java
+  @Singleton
+  public class DiscoveryClient implements EurekaClient {
+      @Inject
+      DiscoveryClient(ApplicationInfoManager applicationInfoManager, 
+                      EurekaClientConfig config, AbstractDiscoveryClientOptionalArgs args,
+                      Provider<BackupRegistry> backupRegistryProvider,
+                      EndpointRandomizer endpointRandomizer) {
+         //注册获取线程池
+         cacheRefreshExecutor = new ThreadPoolExecutor(
+                      1, clientConfig
+             .getCacheRefreshExecutorThreadPoolSize(), 0, TimeUnit.SECONDS,
+                      new SynchronousQueue<Runnable>(),
+                      new ThreadFactoryBuilder()
+                              .setNameFormat("DiscoveryClient-CacheRefreshExecutor-%d")
+                              .setDaemon(true)
+                              .build()  
+      }
+             
+      private void initScheduledTasks() {
+          if (clientConfig.shouldFetchRegistry()) {
+            	//registry-fetch-interval-seconds(默认30s)
+              int registryFetchIntervalSeconds = clientConfig
+                  .getRegistryFetchIntervalSeconds();
+              int expBackOffBound = clientConfig
+                  .getCacheRefreshExecutorExponentialBackOffBound();
+              scheduler.schedule(
+                      new TimedSupervisorTask(
+                              "cacheRefresh",
+                              scheduler,
+                              cacheRefreshExecutor,
+                              registryFetchIntervalSeconds,
+                              TimeUnit.SECONDS,
+                              expBackOffBound,
+                              new CacheRefreshThread()
+                      ),
+                      registryFetchIntervalSeconds, TimeUnit.SECONDS);
+          }
+      }
+  }
+             
+  class CacheRefreshThread implements Runnable {
+      @VisibleForTesting
+      void refreshRegistry() {
+          try {
+    //是否立即获取
+    boolean isFetchingRemoteRegionRegistries = isFetchingRemoteRegionRegistries();
+    boolean remoteRegionsModified = false;
+    //配置（fetch-remote-regions-registry）动态region
+    String latestRemoteRegions = clientConfig.fetchRegistryForRemoteRegions();
+    if (null != latestRemoteRegions) {
+       //获取当前region
+       String currentRemoteRegions = remoteRegionsToFetch.get();
+      if (!latestRemoteRegions.equals(currentRemoteRegions)) {
+          //若region不同
+       synchronized (instanceRegionChecker.getAzToRegionMapper()) {
+     	 if (remoteRegionsToFetch.compareAndSet(currentRemoteRegions, latestRemoteRegions)) {
+         //分割配置的region
+         String[] remoteRegions = latestRemoteRegions.split(",");
+         remoteRegionsRef.set(remoteRegions);
+         instanceRegionChecker.getAzToRegionMapper().setRegionsToFetch(remoteRegions);
+          remoteRegionsModified = true;
+    	  } 
+      }
+     } else {
+       instanceRegionChecker.getAzToRegionMapper().refreshMapping();
+         }
+      }
+  	//拉取注册表
+      boolean success = fetchRegistry(remoteRegionsModified);
+      if (success) {
+         registrySize = localRegionApps.get().size();
+         lastSuccessfulRegistryFetchTimestamp = System.currentTimeMillis();
+      }
+  
+     } catch (Throwable e) {
+      logger.error("Cannot fetch registry from server", e);
        }
-    }
-	//拉取注册表
-    boolean success = fetchRegistry(remoteRegionsModified);
-    if (success) {
-       registrySize = localRegionApps.get().size();
-       lastSuccessfulRegistryFetchTimestamp = System.currentTimeMillis();
-    }
+   }
+  }
+             
+  private boolean fetchRegistry(boolean forceFullRegistryFetch) {
+          Stopwatch tracer = FETCH_REGISTRY_TIMER.start();
+  
+          try {
+              Applications applications = getApplications();
+  
+              if (clientConfig.shouldDisableDelta()
+                      || (!Strings.isNullOrEmpty(clientConfig.getRegistryRefreshSingleVipAddress()))
+                      || forceFullRegistryFetch
+                      || (applications == null)
+                      || (applications.getRegisteredApplications().size() == 0)
+                      || (applications.getVersion() == -1)) 
+              {
+                	//全量拉取
+                  getAndStoreFullRegistry();
+              } else {
+                  //增量拉取
+                  getAndUpdateDelta(applications);
+              }
+              applications.setAppsHashCode(applications.getReconcileHashCode());
+              logTotalInstances();
+          } catch (Throwable e) {
+              return false;
+          } finally {
+              if (tracer != null) {
+                  tracer.stop();
+              }
+          }
+  
+          //发出缓存更新通知
+          onCacheRefreshed();
+  
+          //更新本地数据元
+          updateInstanceRemoteStatus();
+  
+          //拉取成功
+          return true;
+      }
+  ```
 
-   } catch (Throwable e) {
-    logger.error("Cannot fetch registry from server", e);
-     }
- }
-}
-           
-private boolean fetchRegistry(boolean forceFullRegistryFetch) {
-        Stopwatch tracer = FETCH_REGISTRY_TIMER.start();
+  服务端：
 
-        try {
-            // If the delta is disabled or if it is the first time, get all
-            // applications
-            Applications applications = getApplications();
+  ```java
+  public class ApplicationsResource {
+  
+      @GET
+      public Response getContainers(@PathParam("version") String version,
+                    @HeaderParam(HEADER_ACCEPT) String acceptHeader,
+                    @HeaderParam(HEADER_ACCEPT_ENCODING) String acceptEncoding,
+                    @HeaderParam(EurekaAccept.HTTP_X_EUREKA_ACCEPT) String eurekaAccept,
+                    @Context UriInfo uriInfo,
+                   @Nullable @QueryParam("regions") String regionsStr) {
+  		//判断是否有传region
+          boolean isRemoteRegionRequested = null != regionsStr && !regionsStr.isEmpty();
+          String[] regions = null;
+          if (!isRemoteRegionRequested) {
+              EurekaMonitors.GET_ALL.increment();
+          } else {
+              //分割，并排序
+              regions = regionsStr.toLowerCase().split(",");
+              Arrays.sort(regions);
+              EurekaMonitors.GET_ALL_WITH_REMOTE_REGIONS.increment();
+          }
+  
+        	
+          if (!registry.shouldAllowAccess(isRemoteRegionRequested)) {
+              return Response.status(Status.FORBIDDEN).build();
+          }
+          CurrentRequestVersion.set(Version.toEnum(version));
+          KeyType keyType = Key.KeyType.JSON;
+          String returnMediaType = MediaType.APPLICATION_JSON;
+          if (acceptHeader == null || !acceptHeader.contains(HEADER_JSON_VALUE)) {
+              keyType = Key.KeyType.XML;
+              returnMediaType = MediaType.APPLICATION_XML;
+          }
+  
+          Key cacheKey = new Key(Key.EntityType.Application,
+                  ResponseCacheImpl.ALL_APPS,
+                  keyType, CurrentRequestVersion.get(), EurekaAccept.fromString(eurekaAccept), regions
+          );
+  
+          Response response;
+          if (acceptEncoding != null && acceptEncoding.contains(HEADER_GZIP_VALUE)) {
+              response = Response.ok(responseCache.getGZIP(cacheKey))
+                      .header(HEADER_CONTENT_ENCODING, HEADER_GZIP_VALUE)
+                      .header(HEADER_CONTENT_TYPE, returnMediaType)
+                      .build();
+          } else {
+              response = Response.ok(responseCache.get(cacheKey))
+                      .build();
+          }
+          return response;
+      }
+      
+  }
+  ```
 
-            if (clientConfig.shouldDisableDelta()
-                    || (!Strings.isNullOrEmpty(clientConfig.getRegistryRefreshSingleVipAddress()))
-                    || forceFullRegistryFetch
-                    || (applications == null)
-                    || (applications.getRegisteredApplications().size() == 0)
-                    || (applications.getVersion() == -1)) //Client application does not have latest library supporting delta
-            {
-              	//全量拉取
-                getAndStoreFullRegistry();
-            } else {
-                //增量拉取
-                getAndUpdateDelta(applications);
-            }
-            applications.setAppsHashCode(applications.getReconcileHashCode());
-            logTotalInstances();
-        } catch (Throwable e) {
-            return false;
-        } finally {
-            if (tracer != null) {
-                tracer.stop();
-            }
-        }
+- **EurekaClientAutoConfiguration**
 
-        //发出缓存更新通知
-        onCacheRefreshed();
 
-        //更新本地数据元
-        updateInstanceRemoteStatus();
 
-        //拉取成功
-        return true;
-    }
-```
+
 
