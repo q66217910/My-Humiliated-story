@@ -701,7 +701,7 @@
 
 - **DataCenterInfo(数据中心)**
 
-- **Eureka-Server的注册与续期(三级缓存)**
+- **Eureka-Server的注册与续期**
 
   ```java
   public abstract class AbstractInstanceRegistry implements InstanceRegistry {
@@ -968,6 +968,7 @@
   public class ApplicationsResource {
   
       @GET
+      //全量拉取
       public Response getContainers(@PathParam("version") String version,
                     @HeaderParam(HEADER_ACCEPT) String acceptHeader,
                     @HeaderParam(HEADER_ACCEPT_ENCODING) String acceptEncoding,
@@ -998,6 +999,7 @@
               returnMediaType = MediaType.APPLICATION_XML;
           }
   
+          //缓存的key
           Key cacheKey = new Key(Key.EntityType.Application,
                   ResponseCacheImpl.ALL_APPS,
                   keyType, CurrentRequestVersion.get(), EurekaAccept.fromString(eurekaAccept), regions
@@ -1005,6 +1007,7 @@
   
           Response response;
           if (acceptEncoding != null && acceptEncoding.contains(HEADER_GZIP_VALUE)) {
+              //根据key获取内容并压缩
               response = Response.ok(responseCache.getGZIP(cacheKey))
                       .header(HEADER_CONTENT_ENCODING, HEADER_GZIP_VALUE)
                       .header(HEADER_CONTENT_TYPE, returnMediaType)
@@ -1016,8 +1019,209 @@
           return response;
       }
       
+      @Path("delta")
+      @GET
+      //增量拉取
+      public Response getContainerDifferential(
+              @PathParam("version") String version,
+              @HeaderParam(HEADER_ACCEPT) String acceptHeader,
+              @HeaderParam(HEADER_ACCEPT_ENCODING) String acceptEncoding,
+              @HeaderParam(EurekaAccept.HTTP_X_EUREKA_ACCEPT) String eurekaAccept,
+              @Context UriInfo uriInfo, @Nullable @QueryParam("regions") String regionsStr) {
+  
+        	//与全量拉取同样的操作，只有ResponseCacheImpl.ALL_APPS_DELTA不同
+          Key cacheKey = new Key(Key.EntityType.Application,
+                  ResponseCacheImpl.ALL_APPS_DELTA,
+                  keyType, CurrentRequestVersion.get(), 			EurekaAccept.fromString(eurekaAccept), regions
+          );
+  
+          if (acceptEncoding != null
+                  && acceptEncoding.contains(HEADER_GZIP_VALUE)) {
+              return Response.ok(responseCache.getGZIP(cacheKey))
+                      .header(HEADER_CONTENT_ENCODING, HEADER_GZIP_VALUE)
+                      .header(HEADER_CONTENT_TYPE, returnMediaType)
+                      .build();
+          } else {
+              return Response.ok(responseCache.get(cacheKey))
+                      .build();
+          }
+      }
+  }
+  
+  
+  public class ResponseCacheImpl implements ResponseCache {
+      
+       //第一层缓存，会定时更新
+       private final ConcurrentMap<Key, Value> readOnlyCacheMap = new ConcurrentHashMap<Key, Value>();
+      
+      private final LoadingCache<Key, Value> readWriteCacheMap;
+      
+      ResponseCacheImpl(EurekaServerConfig serverConfig,
+                        ServerCodecs serverCodecs, AbstractInstanceRegistry registry) {
+          //设置一个(eureka.server.initial-capacity-of-response-cache,默认1000)，
+          //并且过期时间(eureka.server.response-cache-auto-expiration-in-seconds,默认180s)
+          //的缓存。
+          this.readWriteCacheMap =CacheBuilder.newBuilder()
+              .initialCapacity(serverConfig.getInitialCapacityOfResponseCache())
+                          .expireAfterWrite(
+              serverConfig.getResponseCacheAutoExpirationInSeconds(), TimeUnit.SECONDS)
+             .removalListener(new RemovalListener<Key, Value>() {
+                              @Override
+                 public void onRemoval(RemovalNotification<Key, Value> notification) {
+                      Key removedKey = notification.getKey();
+                      if (removedKey.hasRegions()) {
+                          Key cloneWithNoRegions = removedKey.cloneWithoutRegions();
+                              regionSpecificKeys.remove(cloneWithNoRegions, removedKey);
+                                  }
+                              }
+                          })
+              //根据key生成value
+             .build(new CacheLoader<Key, Value>() {
+                    @Override
+                public Value load(Key key) throws Exception {
+                   if (key.hasRegions()) {
+                       Key cloneWithNoRegions = key.cloneWithoutRegions();
+                          regionSpecificKeys.put(cloneWithNoRegions, key);
+                       }
+                   Value value = generatePayload(key);
+                   return value;
+              }
+           });
+          
+          //允许使用只读缓存，开启定时刷新缓存
+          //(eureka.server.response-cache-update-interval-ms,默认30s)
+          if (shouldUseReadOnlyResponseCache) {
+              timer.schedule(getCacheUpdateTask(),
+               new Date(((System.currentTimeMillis() 
+                    / responseCacheUpdateIntervalMs) * responseCacheUpdateIntervalMs)
+                              + responseCacheUpdateIntervalMs),
+                      responseCacheUpdateIntervalMs);
+          }
+      }
+      
+      //获取注册表并压缩
+      public byte[] getGZIP(Key key) {
+          //shouldUseReadOnlyResponseCache：是否只可以读取缓存
+          //eureka.server.use-read-only-response-cache(默认true)
+          Value payload = getValue(key, shouldUseReadOnlyResponseCache);
+          if (payload == null) {
+              return null;
+          }
+          return payload.getGzipped();
+      }
+      
+      @VisibleForTesting
+      Value getValue(final Key key, boolean useReadOnlyCache) {
+          Value payload = null;
+          try {
+              if (useReadOnlyCache) {
+                  final Value currentPayload = readOnlyCacheMap.get(key);
+                  if (currentPayload != null) {
+                      payload = currentPayload;
+                  } else {
+                      //只读缓存中没有从读写缓存中获取
+                      payload = readWriteCacheMap.get(key);
+                      //并存入只写缓存
+                      readOnlyCacheMap.put(key, payload);
+                  }
+              } else {
+                  //若没有设置，直接从读写缓存中读取
+                  payload = readWriteCacheMap.get(key);
+              }
+          } catch (Throwable t) {
+              logger.error("Cannot get value for key : {}", key, t);
+          }
+          return payload;
+      }
+      
+      
+      //定时任务
+      private TimerTask getCacheUpdateTask() {
+          return new TimerTask() {
+              @Override
+              public void run() {
+                  //将只读缓存中的所有内容，更新成读写缓存中的内容
+                  for (Key key : readOnlyCacheMap.keySet()) {
+                      try {
+                          CurrentRequestVersion.set(key.getVersion());
+                          Value cacheValue = readWriteCacheMap.get(key);
+                          Value currentCacheValue = readOnlyCacheMap.get(key);
+                          if (cacheValue != currentCacheValue) {
+                              readOnlyCacheMap.put(key, cacheValue);
+                          }
+                      } catch (Throwable th) {
+                          logger.error("Error while");
+                      }
+                  }
+              }
+          };
+      }
   }
   ```
+
+  拉取详细
+
+  ```java
+  private Value generatePayload(Key key) {
+          Stopwatch tracer = null;
+          try {
+              String payload;
+              //判断类型
+              switch (key.getEntityType()) {
+                  //Application: 注册列表
+                  case Application:
+                      boolean isRemoteRegionRequested = key.hasRegions();
+  					//全量
+                      if (ALL_APPS.equals(key.getName())) {
+                          if (isRemoteRegionRequested) {
+                              tracer = serializeAllAppsWithRemoteRegionTimer.start();
+                              payload = getPayLoad(key, registry.getApplicationsFrom
+                                                   MultipleRegions(key.getRegions()));
+                          } else {
+                              tracer = serializeAllAppsTimer.start();
+                              payload = getPayLoad(key, registry.getApplications());
+                          }
+                      } else if (ALL_APPS_DELTA.equals(key.getName())) {
+                          //增量
+                          if (isRemoteRegionRequested) {
+                              tracer = serializeDeltaAppsWithRemoteRegionTimer.start();
+                              versionDeltaWithRegions.incrementAndGet();
+                              versionDeltaWithRegionsLegacy.incrementAndGet();
+                              payload = getPayLoad(key,
+                                      registry.getApplicationDeltasFromM
+                                                   ultipleRegions(key.getRegions()));
+                          } else {
+                              tracer = serializeDeltaAppsTimer.start();
+                              versionDelta.incrementAndGet();
+                              versionDeltaLegacy.incrementAndGet();
+                              payload = getPayLoad(
+                                  key, registry.getApplicationDeltas());
+                          }
+                      } else {
+                          tracer = serializeOneApptimer.start();
+                          payload = getPayLoad(
+                              key, registry.getApplication(key.getName()));
+                      }
+                      break;
+                  case VIP:
+                  case SVIP:
+                      tracer = serializeViptimer.start();
+                      payload = getPayLoad(key, getApplicationsForVip(key, registry));
+                      break;
+                  default:
+                      payload = "";
+                      break;
+              }
+              return new Value(payload);
+          } finally {
+              if (tracer != null) {
+                  tracer.stop();
+              }
+          }
+      }
+  ```
+
+  
 
 - **EurekaClientAutoConfiguration**
 
