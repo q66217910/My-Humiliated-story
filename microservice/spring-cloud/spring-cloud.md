@@ -811,7 +811,7 @@
        }
        //将操作设置为新增
        registrant.setActionType(ActionType.ADDED);
-       //统计队列
+       //增量队列
        recentlyChangedQueue.add(new RecentlyChangedItem(lease));
        //更新上次更新时间
        registrant.setLastUpdatedTimestamp();
@@ -1162,6 +1162,24 @@
   拉取详细
 
   ```java
+  //实例信息列表
+  public class Applications {
+     	//实例信息队列
+      private final AbstractQueue<Application> applications;
+      
+  }
+  
+  public class Application {
+      
+      private String name;
+      
+      private final Set<InstanceInfo> instances;
+     
+      private final AtomicReference<List<InstanceInfo>> shuffledInstances;
+      
+      private final Map<String, InstanceInfo> instancesMap;
+  }
+  
   private Value generatePayload(Key key) {
           Stopwatch tracer = null;
           try {
@@ -1219,11 +1237,162 @@
               }
           }
       }
+  
+  //全量获取
+  public Applications getApplicationsFromMultipleRegions(String[] remoteRegions) {
+  
+          Applications apps = new Applications();
+          apps.setVersion(1L);
+      	//遍历所有续期实例
+          for (Entry<String, Map<String, 
+              	Lease<InstanceInfo>>> entry : registry.entrySet()) {
+              Application app = null;
+              if (entry.getValue() != null) {
+                  //appname下不为空
+                  for (Entry<String, Lease<InstanceInfo>> 
+                       stringLeaseEntry : entry.getValue().entrySet()) {
+                      //遍历每一个实例
+                      Lease<InstanceInfo> lease = stringLeaseEntry.getValue();
+                      if (app == null) {
+                          app = new Application(lease.getHolder().getAppName());
+                      }
+                      //将实例信息添加到Applications
+                      app.addInstance(decorateInstanceInfo(lease));
+                  }
+              }
+              if (app != null) {
+                  //添加
+                  apps.addApplication(app);
+              }
+          }
+          apps.setAppsHashCode(apps.getReconcileHashCode());
+          return apps;
+      }
+  
+  //增量队列，当注册或者续期成功时会添加
+  private ConcurrentLinkedQueue<RecentlyChangedItem> recentlyChangedQueue 
+      = new ConcurrentLinkedQueue<RecentlyChangedItem>();
+  
+  public Applications getApplicationDeltasFromMultipleRegions(String[] remoteRegions) {
+          Applications apps = new Applications();
+          apps.setVersion(responseCache.getVersionDeltaWithRegions().get());
+          Map<String, Application> applicationInstancesMap 
+              = new HashMap<String, Application>();
+          try {
+              write.lock();
+              //
+              Iterator<RecentlyChangedItem> iter = this.recentlyChangedQueue.iterator();
+              while (iter.hasNext()) {
+                  Lease<InstanceInfo> lease = iter.next().getLeaseInfo();
+                  InstanceInfo instanceInfo = lease.getHolder();
+                  Application app = applicationInstancesMap
+                      .get(instanceInfo.getAppName());
+                  if (app == null) {
+                      app = new Application(instanceInfo.getAppName());
+                      applicationInstancesMap.put(instanceInfo.getAppName(), app);
+                      apps.addApplication(app);
+                  }
+                  app.addInstance(new InstanceInfo(decorateInstanceInfo(lease)));
+              }
+  
+              Applications allApps = getApplicationsFromMultipleRegions(remoteRegions);
+              apps.setAppsHashCode(allApps.getReconcileHashCode());
+              return apps;
+          } finally {
+              write.unlock();
+          }
+      }
+  
+  //定时清理增量队列
+  private TimerTask getDeltaRetentionTask() {
+          return new TimerTask() {
+  
+              @Override
+              public void run() {
+                  Iterator<RecentlyChangedItem> it = recentlyChangedQueue.iterator();
+                  while (it.hasNext()) {
+                      if (it.next().getLastUpdateTime() <
+                              System.currentTimeMillis() - serverConfig
+                          .getRetentionTimeInMSInDeltaQueue()) {
+                          it.remove();
+                      } else {
+                          break;
+                      }
+                  }
+              }
+  
+          };
+      }
+  ```
+
+- **server集群同步**
+
+  ```java
+  private void replicateToPeers(Action action, String appName, String id,
+                                    InstanceInfo info ,
+                                    InstanceStatus newStatus, boolean isReplication) {
+          Stopwatch tracer = action.getTimer().start();
+          try {
+              if (isReplication) {
+                  numberOfReplicationsLastMin.increment();
+              }
+     
+              if (peerEurekaNodes == Collections.EMPTY_LIST || isReplication) {
+                  return;
+              }
+  			//循环所有节点
+              for (final PeerEurekaNode node : peerEurekaNodes.getPeerEurekaNodes()) {
+                  if (peerEurekaNodes.isThisMyUrl(node.getServiceUrl())) {
+                      continue;
+                  }
+                  replicateInstanceActionsToPeers(action, appName, 
+                                                  id, info, newStatus, node);
+              }
+          } finally {
+              tracer.stop();
+          }
+      }
+  
+  private void replicateInstanceActionsToPeers(Action action, String appName,
+                          String id, InstanceInfo info, InstanceStatus newStatus,
+                                                   PeerEurekaNode node) {
+          try {
+              InstanceInfo infoFromRegistry = null;
+              CurrentRequestVersion.set(Version.V2);
+              switch (action) {
+                  case Cancel:
+                      node.cancel(appName, id);
+                      break;
+                  case Heartbeat:
+                      //心跳
+                      InstanceStatus overriddenStatus = overriddenInstanceStatusMap
+                          .get(id);
+                      infoFromRegistry = getInstanceByAppAndId(appName, id, false);
+                      node.heartbeat(appName, id, 
+                                     infoFromRegistry, overriddenStatus, false);
+                      break;
+                  case Register:
+                      //注册
+                      node.register(info);
+                      break;
+                  case StatusUpdate:
+                      //状态更新
+                      infoFromRegistry = getInstanceByAppAndId(appName, id, false);
+                      node.statusUpdate(appName, id, newStatus, infoFromRegistry);
+                      break;
+                  case DeleteStatusOverride:
+                      //下线
+                      infoFromRegistry = getInstanceByAppAndId(appName, id, false);
+                      node.deleteStatusOverride(appName, id, infoFromRegistry);
+                      break;
+              }
+          } catch (Throwable t) {
+              logger.error("Cannot replicate information to {} for action {}");
+          }
+      }
   ```
 
   
-
-- **EurekaClientAutoConfiguration**
 
 
 

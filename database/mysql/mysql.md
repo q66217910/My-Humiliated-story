@@ -77,7 +77,55 @@ MYSQL
 	3.外键约束
 ```
 
+##### 1-5. 事务的传播属性
 
+当多个事务同时存在时，spring的处理
+
+```java
+@Target({ElementType.TYPE, ElementType.METHOD})
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface Transactional {
+	
+    //事务的传播类型
+    Propagation propagation() default Propagation.REQUIRED;
+    //事务的隔离级别
+    Isolation isolation() default Isolation.DEFAULT;
+}
+
+public enum Propagation {
+    
+    //支持当前事务,不存在创建一个新事务
+    REQUIRED(TransactionDefinition.PROPAGATION_REQUIRED),
+    //支持当前事务,如果事务不存在则以非事务形式执行
+    SUPPORTS(TransactionDefinition.PROPAGATION_SUPPORTS),
+    //支持当前事务，如果事务不存在则抛异常
+    MANDATORY(TransactionDefinition.PROPAGATION_MANDATORY),
+    //创建一个事务，如果存在事务则停止当前事务(两个独立的事务)
+    REQUIRES_NEW(TransactionDefinition.PROPAGATION_REQUIRES_NEW),
+    //以非事务执行
+    NOT_SUPPORTED(TransactionDefinition.PROPAGATION_NOT_SUPPORTED),
+    //执行非事务,事务存在则抛异常
+    NEVER(TransactionDefinition.PROPAGATION_NEVER),
+    //如果有运行的事务,嵌套在上一个事务中
+    NESTED(TransactionDefinition.PROPAGATION_NESTED);
+}
+
+public enum Isolation {
+    
+    //使用数据库默认的隔离级别
+    DEFAULT(TransactionDefinition.ISOLATION_DEFAULT),
+    //读未提交(RU)
+    READ_UNCOMMITTED(TransactionDefinition.ISOLATION_READ_UNCOMMITTED),
+    //读提交(RC)
+    READ_COMMITTED(TransactionDefinition.ISOLATION_READ_COMMITTED),
+    //可重复读(RR)
+    REPEATABLE_READ(TransactionDefinition.ISOLATION_REPEATABLE_READ),
+    //串行化(S)
+    SERIALIZABLE(TransactionDefinition.ISOLATION_SERIALIZABLE);
+}
+```
 
 ### 2. MYSQL的日志
 
@@ -596,3 +644,5 @@ mysql的组成
     分析器：词法分析, 语法分析.
     优化器：执行计划生产，索引的选择。
     执行器： 操作存储引擎, 返回执行结果.
+
+
