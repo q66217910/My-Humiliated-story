@@ -1706,6 +1706,8 @@ Outh2提供的令牌存储策略:
   
 - **Endpoint**
 
+  获取accessToken
+
   ```java
   @FrameworkEndpoint
   public class TokenEndpoint extends AbstractEndpoint {
@@ -1773,6 +1775,110 @@ Outh2提供的令牌存储策略:
       
   }
   ```
+
+  验证Authorization
+
+  ```java
+  public class AuthorizationEndpoint extends AbstractEndpoint {
+  	
+      @RequestMapping(value = "/oauth/authorize", method = RequestMethod.POST, params = OAuth2Utils.USER_OAUTH_APPROVAL)
+  	public View approveOrDeny(@RequestParam Map<String, String> approvalParameters, 							  Map<String, ?> model,
+  							  SessionStatus sessionStatus,
+                                Principal principal) {
+  
+  		if (!(principal instanceof Authentication)) {
+  			sessionStatus.setComplete();
+  			throw new InsufficientAuthenticationException(");
+  		}
+  		
+          //获取AuthorizationRequest
+  		AuthorizationRequest authorizationRequest = (AuthorizationRequest) model.get(AUTHORIZATION_REQUEST_ATTR_NAME);
+  
+  		if (authorizationRequest == null) {
+  			sessionStatus.setComplete();
+  			throw new InvalidRequestException("");
+  		}
+  
+  		//检查以确保在用户批准步骤中未修改授权请求
+  		Map<String, Object> originalAuthorizationRequest = (Map<String, Object>) model.get(ORIGINAL_AUTHORIZATION_REQUEST_ATTR_NAME);
+  		if (isAuthorizationRequestModified(authorizationRequest, originalAuthorizationRequest)) {
+  			throw new InvalidRequestException("Changes were detected");
+  		}
+  
+  		try {
+              //解析请求响应类型的初始化（由OAuth2RequestFactory）与最初请求响应类型
+  			Set<String> responseTypes = authorizationRequest.getResponseTypes();
+  
+  			authorizationRequest.setApprovalParameters(approvalParameters);
+              //更新Approval
+  			authorizationRequest = userApprovalHandler
+                  .updateAfterApproval(authorizationRequest,
+  					(Authentication) principal);
+  
+  			boolean approved = userApprovalHandler
+                  .isApproved(authorizationRequest, (Authentication) principal);
+  			authorizationRequest.setApproved(approved);
+  			
+              //没有重定向地址
+  			if (authorizationRequest.getRedirectUri() == null) {
+  				sessionStatus.setComplete();
+  				throw new InvalidRequestException("Canno");
+  			}
+  
+              //是否批准授权
+  			if (!authorizationRequest.isApproved()) {
+                  //没批准，重定向到授权页面
+  				return new RedirectView(getUnsuccessfulRedirect(authorizationRequest,
+  						new UserDeniedAuthorizationException("User denied access"), responseTypes.contains("token")),
+  						false, true, false);
+  			}
+  
+              //隐式跳转到uri上的地址
+  			if (responseTypes.contains("token")) {
+  				return getImplicitGrantResponse(authorizationRequest).getView();
+  			}
+  			//AuthorizationCode
+  			return getAuthorizationCodeResponse(authorizationRequest, 
+                                                  (Authentication) principal);
+  		}
+  		finally {
+              //更新session状态
+  			sessionStatus.setComplete();
+  		}
+  
+  	}
+  }
+  ```
+
+-  **ClientDetailsServiceConfigurer**
+
+  ```java
+  public class JdbcClientDetailsService implements ClientDetailsService, ClientRegistrationService {
+  	
+      //sql:select client_id,client_secret, resource_ids, scope,
+  	//    authorized_grant_types, web_server_redirect_uri, 
+      //    access_token_validity,  authorities,refresh_token_validity,
+  	//	  additional_information, autoapprove
+      //    from oauth_client_details  where client_id = ?
+      
+      //根据cientId查询ClientDetails
+      public ClientDetails loadClientByClientId(String clientId){
+  		ClientDetails details;
+  		try {
+  			details = jdbcTemplate
+                  .queryForObject(selectClientDetailsSql
+                                  , new ClientDetailsRowMapper(), clientId);
+  		}
+  		catch (EmptyResultDataAccessException e) {
+  			throw new NoSuchClientException("No client with requested id: ");
+  		}
+  		return details;
+  	}
+      
+  }
+  ```
+
+  
 
 - 
 
