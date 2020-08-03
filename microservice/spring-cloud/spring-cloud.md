@@ -1394,7 +1394,385 @@
 
   
 
+## 2.鉴权中心
 
+### 2-1.outh2
 
+- **OAuth2的协议握手流程**
 
+  - `client`: 第三方应用
+  - `resource owner`: 拥有被访问资源的用户
+  - `Authorization server`: 认证服务器，用来进行用户认证并颁发token
+  - `Resource server`：资源服务器，拥有被访问资源的服务器，需要通过token来确定是否有权限访问
+
+  ```mermaid
+  sequenceDiagram
+  	Client->>resource owner:Authorization Request
+  	resource owner->>Client:Authorization Grant
+  	Client->>Authorization server: Authorization Grant
+  	Authorization server->>Client:Access Token
+  	Client->>Resource server: Access Token
+  	Resource server->>Client: Protected Resource
+  ```
+
+- **客户端属性配置**
+
+  - `clientId`: 第三方账号，唯一id
+
+  - **`clientSecret`**：安全凭据
+
+  - **`scope`**：指定客户端的权限访问（read，write，trust）
+
+  - **`resourceIds`**：客户端可以访问的资源
+
+  - **`authorizedGrantTypes`**：客户端可以使用的授权类型
+
+    浏览器：authorization_code,refresh_token
+
+    移动端：password,refresh_token
+
+  - **`registeredRedirectUris`**：客户端重定向uri
+
+  - **`autoApproveScopes`**：用户是否自动Approval (true/false/read/write)
+
+  - **`accessTokenValiditySeconds`**: 客户端access_token的有效时间（默认12h）
+
+  - **`refreshTokenValiditySeconds`**：客户端refresh_token的有效时间（默认30天）
+
+  - **`additionalInformation`**： 预留字段
+
+- **获取令牌的类型**
+
+  ```
+  authorizedGrantTypes:
+  
+  Authorization code（授权码模式）:根据auth code获取token
+  Resource Owner Password Credentials（密码模式）
+  Implicit Grant（隐式模式）：浏览器使用,比授权码模式少了code的环节，回调url携带token
+  Client Credentials（客户端模式）: 根据client的id和密钥获取token
+  ```
+
+- **TokenStore**
+
+  ```
+Outh2提供的令牌存储策略:
+  InMemoryTokenStore:内存存储
+  JdbcTokenStore：JDBC
+  JwkTokenStore: JWK
+  JwtTokenStore: JWT
+  RedisTokenStore: Redis
+  ```
+  
+- **createAccessToken(创建令牌)**
+
+  对于一个client和username
+
+  1.如果存在token,则更新用户信息，复用原来的accessToken
+  
+  2.如果存在token,刚好过期,则重新生成token，复用refresh token，所有时间重新计算
+  
+  3.如果不存在token,则新生成token/refresh token , 时间也是新的;
+  
+  ```java
+  public class DefaultTokenServices 
+      implements AuthorizationServerTokenServices, ResourceServerTokenServices,
+  		ConsumerTokenServices, InitializingBean {
+       
+       @Transactional
+  	public OAuth2AccessToken createAccessToken(OAuth2Authentication authentication) throws AuthenticationException {
+  		//根据TokenStore获取令牌
+          //(以redis为例，用username/client/scope MD5做key)
+  		OAuth2AccessToken existingAccessToken 
+              = tokenStore.getAccessToken(authentication);
+  		OAuth2RefreshToken refreshToken = null;
+  		if (existingAccessToken != null) {
+              //判断令牌是否过期
+  			if (existingAccessToken.isExpired()) {
+                  //令牌过期，删除令牌
+  				if (existingAccessToken.getRefreshToken() != null) {
+  					refreshToken = existingAccessToken.getRefreshToken();
+  					tokenStore.removeRefreshToken(refreshToken);
+  				}
+  				tokenStore.removeAccessToken(existingAccessToken);
+  			}
+  			else {
+  				//令牌正常，更新用户信息
+  				tokenStore.storeAccessToken(existingAccessToken, authentication);
+  				return existingAccessToken;
+  			}
+  		}
+  
+  		//刷新令牌不存在时创建一个刷新令牌
+  		if (refreshToken == null) {
+  			refreshToken = createRefreshToken(authentication);
+  		}else if (refreshToken instanceof ExpiringOAuth2RefreshToken) {
+              //本身令牌过期,需要重新发放
+  			ExpiringOAuth2RefreshToken expiring 
+                  = (ExpiringOAuth2RefreshToken) refreshToken;
+  			if (System.currentTimeMillis() > expiring.getExpiration().getTime()) {
+  				refreshToken = createRefreshToken(authentication);
+  			}
+  		}
+  		//创建accessToken
+  		OAuth2AccessToken accessToken
+              = createAccessToken(authentication, refreshToken);
+          //存储访问令牌
+  		tokenStore.storeAccessToken(accessToken, authentication);
+  		//刷新令牌
+  		refreshToken = accessToken.getRefreshToken();
+  		if (refreshToken != null) {
+              //存储刷新令牌
+  			tokenStore.storeRefreshToken(refreshToken, authentication);
+  		}
+          //返回访问令牌
+  		return accessToken;
+  	}
+              
+  }
+  ```
+  
+- **refreshAccessToken(刷新令牌)**
+
+  根据RefreshToken刷新AccessToken
+
+  1.如果不存在或者过期refresh token,抛出异常/客户端返回403
+  
+  2.如果存在refresh token, 删除所有旧的相关token, 生成新的token(新时间)
+  
+  3.判断是否复用refresh token, 复用则不重新生成refresh token; 不复用, 则新生成refresh_token, 时间也刷新
+  
+  ```java
+  //是否拒绝刷新RefreshToken
+  private boolean reuseRefreshToken = true;
+  public OAuth2AccessToken refreshAccessToken(String refreshTokenValue,
+                                              TokenRequest tokenRequest)
+  			throws AuthenticationException {
+  		
+      	//判断是否支持刷新令牌
+  		if (!supportRefreshToken) {
+  			throw new InvalidGrantException("Invalid refresh token: ");
+  		}
+  		//读取refreshToken
+  		OAuth2RefreshToken refreshToken 
+              = tokenStore.readRefreshToken(refreshTokenValue);
+      	//refreshToken不存在抛异常
+  		if (refreshToken == null) {
+  			throw new InvalidGrantException("Invalid refresh token: ");
+  		}
+  		//获取原来认证信息
+  		OAuth2Authentication authentication = tokenStore.readAuthenticationForRefreshToken(refreshToken);
+  		if (this.authenticationManager != null && !authentication.isClientOnly())
+              //重新认证身份
+  			Authentication user = new PreAuthenticatedAuthenticationToken(
+              authentication.getUserAuthentication(), 
+              "", authentication.getAuthorities());
+  			user = authenticationManager.authenticate(user);
+  			Object details = authentication.getDetails();
+  			authentication = 
+                  new OAuth2Authentication(authentication.getOAuth2Request(), user);
+  			authentication.setDetails(details);
+  		}
+  		//判断cientId
+  		String clientId = authentication.getOAuth2Request().getClientId();
+  		if (clientId == null || !clientId.equals(tokenRequest.getClientId())) {
+  			throw new InvalidGrantException("Wrong client for this refresh token: ");
+  		}
+  		//清除refreshToken相关的AccessToken
+  		tokenStore.removeAccessTokenUsingRefreshToken(refreshToken);
+  		
+  		if (isExpired(refreshToken)) {
+              //若refreshToken已过期,删除refreshToken
+  			tokenStore.removeRefreshToken(refreshToken);
+  			throw new InvalidTokenException("Invalid refresh token (expired): ");
+  		}
+  
+  		//创建一个刷新认证
+  		authentication = createRefreshedAuthentication(authentication, tokenRequest);
+  
+  		if (!reuseRefreshToken) {
+              //刷新RefreshToken,删除原来的RefreshToken，生成新的RefreshToken
+  			tokenStore.removeRefreshToken(refreshToken);
+  			refreshToken = createRefreshToken(authentication);
+  		}
+  
+  		//生成新的accessToken
+  		OAuth2AccessToken accessToken = 
+              createAccessToken(authentication, refreshToken);
+  		//存储新的accessToken
+  		tokenStore.storeAccessToken(accessToken, authentication);
+  		if (!reuseRefreshToken) {
+              //更新RefreshToken
+  			tokenStore.storeRefreshToken(
+                  accessToken.getRefreshToken(), authentication);
+  		}
+  		return accessToken;
+  	}
+  ```
+  
+- **自动refresh token**
+
+  对过期的token进行刷新
+
+  ```java
+  public class OAuth2AuthenticationProcessingFilter 
+      implements Filter, InitializingBean {
+      
+      public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain) throws IOException,ServletException {
+           
+          //请求信息
+          final HttpServletRequest request = (HttpServletRequest) req;
+          //响应信息
+  		final HttpServletResponse response = (HttpServletResponse) res;
+          try {
+             //从请求头(Authorization)中获取token,构建出来的认证请求
+             Authentication authentication = tokenExtractor.extract(request);
+             if (authentication == null) {
+                 //认证信息不存在，清除当前线程的上下文
+  			   SecurityContextHolder.clearContext();
+  			}else{
+                 //设置要传递的token值
+                 request.setAttribute(
+                     OAuth2AuthenticationDetails.ACCESS_TOKEN_VALUE, authentication
+                     .getPrincipal());
+                 if (authentication instanceof AbstractAuthenticationToken) {
+                     //资源认证
+  					AbstractAuthenticationToken needsDetails 
+                          = (AbstractAuthenticationToken) authentication;
+  					needsDetails.setDetails(authenticationDetailsSource
+                                              .buildDetails(request));
+  				}
+                 //授权认证
+                 Authentication authResult = authenticationManager
+                     .authenticate(authentication);
+                 //给当前线程设置认证信息
+                 SecurityContextHolder.getContext().setAuthentication(authResult);
+             } 
+          }catch (OAuth2Exception failed) {
+              //授权失败时
+  			SecurityContextHolder.clearContext();
+              //端点异常处理器
+  			authenticationEntryPoint.commence(request, response,
+  					new InsufficientAuthenticationException(
+                          failed.getMessage(), failed));
+  			return;
+  		}
+          //过滤流继续执行
+          chain.doFilter(request, response);
+     }
+  }
+  
+  //异常处理
+  public class OAuth2AuthenticationEntryPoint 
+      extends AbstractOAuth2SecurityExceptionHandler implements
+  		AuthenticationEntryPoint {
+      
+      public void commence(HttpServletRequest request, 
+                           HttpServletResponse response, 
+                           AuthenticationException authException)
+  			throws IOException, ServletException {
+  		doHandle(request, response, authException);
+  	}
+      
+      protected final void doHandle(HttpServletRequest request, HttpServletResponse response, Exception authException)
+  			throws IOException, ServletException {
+  		try {
+              //解析异常
+  			ResponseEntity<?> result = exceptionTranslator.translate(authException);
+              //扩展respone的属性和内容
+  			result = enhanceResponse(result, authException);
+              //respone 刷新缓存直接返回
+  			exceptionRenderer.handleHttpEntityResponse(result, new ServletWebRequest(
+                  request, response));
+  			response.flushBuffer();
+  		}
+  		catch (ServletException e) {
+  			if (handlerExceptionResolver
+                  .resolveException(request, response, this, e) == null) {
+  				throw e;
+  			}
+  		}
+  		catch (IOException e) {
+  			throw e;
+  		}
+  		catch (RuntimeException e) {
+  			throw e;
+  		}
+  		catch (Exception e) {	
+  			throw new RuntimeException(e);
+  		}
+  	}
+  }
+  ```
+  
+- **Endpoint**
+
+  ```java
+  @FrameworkEndpoint
+  public class TokenEndpoint extends AbstractEndpoint {
+  	
+      @RequestMapping(value = "/oauth/token", method=RequestMethod.POST)
+  	public ResponseEntity<OAuth2AccessToken> postAccessToken(Principal principal, @RequestParam Map<String, String> parameters) 
+          throws HttpRequestMethodNotSupportedException {
+  		
+          //principal只能是Authentication
+  		if (!(principal instanceof Authentication)) {
+  			throw new InsufficientAuthenticationException();
+  		}
+  
+          //获取clientId
+  		String clientId = getClientId(principal);
+          //根据clientId获取ClientDetails
+  		ClientDetails authenticatedClient 
+              = getClientDetailsService().loadClientByClientId(clientId);
+  		
+          //创建一个新的TokenRequest
+  		TokenRequest tokenRequest = getOAuth2RequestFactory()
+              .createTokenRequest(parameters, authenticatedClient);
+  
+  		if (clientId != null && !clientId.equals("")) {
+              //判断clientid是否一致
+  			if (!clientId.equals(tokenRequest.getClientId())) {
+  				throw new InvalidClientException();
+  			}
+  		}
+  		if (authenticatedClient != null) {
+              //校验客户端的作用域
+  			oAuth2RequestValidator.validateScope(tokenRequest, authenticatedClient);
+  		}
+          //grantType不能为空
+  		if (!StringUtils.hasText(tokenRequest.getGrantType())) {
+  			throw new InvalidRequestException("Missing grant type");
+  		}
+          //grantType类型为implicit隐式不需要获取token
+  		if (tokenRequest.getGrantType().equals("implicit")) {
+  			throw new InvalidGrantException("Implicit grant type not");
+  		}
+  
+  		if (isAuthCodeRequest(parameters)) {
+              //若是Authorization code类型，scope不能为空
+  			if (!tokenRequest.getScope().isEmpty()) {
+  				tokenRequest.setScope(Collections.<String> emptySet());
+  			}
+  		}
+  
+  		if (isRefreshTokenRequest(parameters)) {
+  			tokenRequest.setScope(OAuth2Utils
+                			.parseParameterList(parameters.get(OAuth2Utils.SCOPE)));
+  		}
+  
+          //获取认证
+  		OAuth2AccessToken token = getTokenGranter()
+              .grant(tokenRequest.getGrantType(), tokenRequest);
+  		if (token == null) {
+  			throw new UnsupportedGrantTypeException("Unsupported grant type: ");
+  		}
+  		//返回认证信息
+  		return getResponse(token);
+  
+  	}
+      
+  }
+  ```
+
+- 
 
