@@ -1609,101 +1609,6 @@ Outh2提供的令牌存储策略:
   	}
   ```
   
-- **自动refresh token**
-
-  对过期的token进行刷新
-
-  ```java
-  public class OAuth2AuthenticationProcessingFilter 
-      implements Filter, InitializingBean {
-      
-      public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain) throws IOException,ServletException {
-           
-          //请求信息
-          final HttpServletRequest request = (HttpServletRequest) req;
-          //响应信息
-  		final HttpServletResponse response = (HttpServletResponse) res;
-          try {
-             //从请求头(Authorization)中获取token,构建出来的认证请求
-             Authentication authentication = tokenExtractor.extract(request);
-             if (authentication == null) {
-                 //认证信息不存在，清除当前线程的上下文
-  			   SecurityContextHolder.clearContext();
-  			}else{
-                 //设置要传递的token值
-                 request.setAttribute(
-                     OAuth2AuthenticationDetails.ACCESS_TOKEN_VALUE, authentication
-                     .getPrincipal());
-                 if (authentication instanceof AbstractAuthenticationToken) {
-                     //资源认证
-  					AbstractAuthenticationToken needsDetails 
-                          = (AbstractAuthenticationToken) authentication;
-  					needsDetails.setDetails(authenticationDetailsSource
-                                              .buildDetails(request));
-  				}
-                 //授权认证
-                 Authentication authResult = authenticationManager
-                     .authenticate(authentication);
-                 //给当前线程设置认证信息
-                 SecurityContextHolder.getContext().setAuthentication(authResult);
-             } 
-          }catch (OAuth2Exception failed) {
-              //授权失败时
-  			SecurityContextHolder.clearContext();
-              //端点异常处理器
-  			authenticationEntryPoint.commence(request, response,
-  					new InsufficientAuthenticationException(
-                          failed.getMessage(), failed));
-  			return;
-  		}
-          //过滤流继续执行
-          chain.doFilter(request, response);
-     }
-  }
-  
-  //异常处理
-  public class OAuth2AuthenticationEntryPoint 
-      extends AbstractOAuth2SecurityExceptionHandler implements
-  		AuthenticationEntryPoint {
-      
-      public void commence(HttpServletRequest request, 
-                           HttpServletResponse response, 
-                           AuthenticationException authException)
-  			throws IOException, ServletException {
-  		doHandle(request, response, authException);
-  	}
-      
-      protected final void doHandle(HttpServletRequest request, HttpServletResponse response, Exception authException)
-  			throws IOException, ServletException {
-  		try {
-              //解析异常
-  			ResponseEntity<?> result = exceptionTranslator.translate(authException);
-              //扩展respone的属性和内容
-  			result = enhanceResponse(result, authException);
-              //respone 刷新缓存直接返回
-  			exceptionRenderer.handleHttpEntityResponse(result, new ServletWebRequest(
-                  request, response));
-  			response.flushBuffer();
-  		}
-  		catch (ServletException e) {
-  			if (handlerExceptionResolver
-                  .resolveException(request, response, this, e) == null) {
-  				throw e;
-  			}
-  		}
-  		catch (IOException e) {
-  			throw e;
-  		}
-  		catch (RuntimeException e) {
-  			throw e;
-  		}
-  		catch (Exception e) {	
-  			throw new RuntimeException(e);
-  		}
-  	}
-  }
-  ```
-  
 - **Endpoint**
 
   获取accessToken
@@ -1745,7 +1650,7 @@ Outh2提供的令牌存储策略:
   		if (!StringUtils.hasText(tokenRequest.getGrantType())) {
   			throw new InvalidRequestException("Missing grant type");
   		}
-          //grantType类型为implicit隐式不需要获取token
+          //implicit隐式不能访问
   		if (tokenRequest.getGrantType().equals("implicit")) {
   			throw new InvalidGrantException("Implicit grant type not");
   		}
@@ -1776,7 +1681,7 @@ Outh2提供的令牌存储策略:
   }
   ```
 
-  验证Authorization
+  授权码/ 隐式模式 访问
 
   ```java
   public class AuthorizationEndpoint extends AbstractEndpoint {
@@ -1874,6 +1779,123 @@ Outh2提供的令牌存储策略:
   		}
   		return details;
   	}
+      
+  }
+  ```
+
+  
+
+- **请求资源服务(FilterChain)**
+
+  ```java
+  public class OAuth2AuthenticationProcessingFilter 
+      implements Filter, InitializingBean {
+      
+      public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain) throws IOException,ServletException {
+           
+          //请求信息
+          final HttpServletRequest request = (HttpServletRequest) req;
+          //响应信息
+  		final HttpServletResponse response = (HttpServletResponse) res;
+          try {
+             //从请求头(Authorization)中获取token,构建出来的认证请求
+             Authentication authentication = tokenExtractor.extract(request);
+             if (authentication == null) {
+                 //认证信息不存在，清除当前线程的上下文
+  			   SecurityContextHolder.clearContext();
+  			}else{
+                 //设置要传递的token值
+                 request.setAttribute(
+                     OAuth2AuthenticationDetails.ACCESS_TOKEN_VALUE, authentication
+                     .getPrincipal());
+                 if (authentication instanceof AbstractAuthenticationToken) {
+                     //资源认证
+  					AbstractAuthenticationToken needsDetails 
+                          = (AbstractAuthenticationToken) authentication;
+  					needsDetails.setDetails(authenticationDetailsSource
+                                              .buildDetails(request));
+  				}
+                 //授权认证
+                 Authentication authResult = authenticationManager
+                     .authenticate(authentication);
+                 //给当前线程设置认证信息
+                 SecurityContextHolder.getContext().setAuthentication(authResult);
+             } 
+          }catch (OAuth2Exception failed) {
+              //授权失败时
+  			SecurityContextHolder.clearContext();
+              //端点异常处理器
+  			authenticationEntryPoint.commence(request, response,
+  					new InsufficientAuthenticationException(
+                          failed.getMessage(), failed));
+  			return;
+  		}
+          //过滤流继续执行
+          chain.doFilter(request, response);
+     }
+  }
+  
+  //异常处理
+  public class OAuth2AuthenticationEntryPoint 
+      extends AbstractOAuth2SecurityExceptionHandler implements
+  		AuthenticationEntryPoint {
+      
+      public void commence(HttpServletRequest request, 
+                           HttpServletResponse response, 
+                           AuthenticationException authException)
+  			throws IOException, ServletException {
+  		doHandle(request, response, authException);
+  	}
+      
+      protected final void doHandle(HttpServletRequest request, HttpServletResponse response, Exception authException)
+  			throws IOException, ServletException {
+  		try {
+              //解析异常
+  			ResponseEntity<?> result = exceptionTranslator.translate(authException);
+              //扩展respone的属性和内容
+  			result = enhanceResponse(result, authException);
+              //respone 刷新缓存直接返回
+  			exceptionRenderer.handleHttpEntityResponse(result, new ServletWebRequest(
+                  request, response));
+  			response.flushBuffer();
+  		}
+  		catch (ServletException e) {
+  			if (handlerExceptionResolver
+                  .resolveException(request, response, this, e) == null) {
+  				throw e;
+  			}
+  		}
+  		catch (IOException e) {
+  			throw e;
+  		}
+  		catch (RuntimeException e) {
+  			throw e;
+  		}
+  		catch (Exception e) {	
+  			throw new RuntimeException(e);
+  		}
+  	}
+  }
+  
+  public abstract class WebSecurityConfigurerAdapter implements
+  		WebSecurityConfigurer<WebSecurity> {
+      
+      //认证
+      public Authentication authenticate(Authentication authentication)
+  				throws AuthenticationException {
+  			if (delegate != null) {
+  				return delegate.authenticate(authentication);
+  			}
+  
+  			synchronized (delegateMonitor) {
+  				if (delegate == null) {
+  					delegate = this.delegateBuilder.getObject();
+  					this.delegateBuilder = null;
+  				}
+  			}
+  
+  			return delegate.authenticate(authentication);
+  		}
       
   }
   ```
