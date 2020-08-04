@@ -1681,7 +1681,7 @@ Outh2提供的令牌存储策略:
   }
   ```
 
-  授权码/ 隐式模式 访问
+  获取授权码，并重定向到指定uri
 
   ```java
   public class AuthorizationEndpoint extends AbstractEndpoint {
@@ -1752,6 +1752,43 @@ Outh2提供的令牌存储策略:
   		}
   
   	}
+  }
+  ```
+
+  检查access_token
+
+  ```java
+  @FrameworkEndpoint
+  public class CheckTokenEndpoint {
+  
+      @RequestMapping(value = "/oauth/check_token")
+  	@ResponseBody
+  	public Map<String, ?> checkToken(@RequestParam("token") String value) {
+  
+          //根据token获取OAuth2AccessToken
+  		OAuth2AccessToken token = resourceServerTokenServices.readAccessToken(value);
+  		if (token == null) {
+  			throw new InvalidTokenException("Token was not recognised");
+  		}
+  
+          //token过期
+  		if (token.isExpired()) {
+  			throw new InvalidTokenException("Token has expired");
+  		}
+  
+          //根据token获取OAuth2Authentication
+  		OAuth2Authentication authentication = resourceServerTokenServices
+              .loadAuthentication(token.getValue());
+  
+          //将token转化为对象
+  		Map<String, Object> response = (Map<String, Object>)accessTokenConverter
+              .convertAccessToken(token, authentication);
+  
+  		response.put("active", true);
+  
+  		return response;
+  	}
+      
   }
   ```
 
@@ -1980,7 +2017,7 @@ Outh2提供的令牌存储策略:
 
   
 
--  **FilterChain**
+- **FilterChain**
 
   - **WebAsyncManagerIntegrationFilter**：异步方式
   - **SecurityContextPersistenceFilter**：同步方式
@@ -1998,5 +2035,5 @@ Outh2提供的令牌存储策略:
   - ***ExceptionTranslationFilter***：异常转换过滤器
   - ***FilterSecurityInterceptor***：访问特定路径应该具备的权限
 
-- 
+  
 
