@@ -1785,7 +1785,7 @@ Outh2提供的令牌存储策略:
 
   
 
-- **请求资源服务(FilterChain)**
+- **请求资源服务**
 
   ```java
   public class OAuth2AuthenticationProcessingFilter 
@@ -1887,6 +1887,7 @@ Outh2提供的令牌存储策略:
   				return delegate.authenticate(authentication);
   			}
   
+          	//创建delegate
   			synchronized (delegateMonitor) {
   				if (delegate == null) {
   					delegate = this.delegateBuilder.getObject();
@@ -1898,9 +1899,104 @@ Outh2提供的令牌存储策略:
   		}
       
   }
+  
+  public class OAuth2AuthenticationManager 
+      implements AuthenticationManager, InitializingBean {
+      
+      public Authentication authenticate(Authentication authentication) 
+          throws AuthenticationException {
+  
+  		if (authentication == null) {
+  			throw new InvalidTokenException("Invalid token (token not found)");
+  		}
+          //获取access_token
+  		String token = (String) authentication.getPrincipal();
+          //根据token获取OAuth2Authentication
+  		OAuth2Authentication auth = tokenServices.loadAuthentication(token);
+  		if (auth == null) {
+  			throw new InvalidTokenException("Invalid token: " + token);
+  		}
+  		//获取可访问资源
+  		Collection<String> resourceIds = auth.getOAuth2Request().getResourceIds();
+  		if (resourceId != null && resourceIds != null
+              && !resourceIds.isEmpty() && !resourceIds.contains(resourceId)) {
+  			throw new OAuth2AccessDeniedException("Invalid token does not)");
+  		}
+  
+          //检查clientId与权限
+  		checkClientDetails(auth);
+  
+  		if (authentication.getDetails() instanceof OAuth2AuthenticationDetails) {
+  			OAuth2AuthenticationDetails details 
+                  = (OAuth2AuthenticationDetails) authentication.getDetails();
+  			if (!details.equals(auth.getDetails())) {
+  				details.setDecodedDetails(auth.getDetails());
+  			}
+  		}
+  		auth.setDetails(authentication.getDetails());
+  		auth.setAuthenticated(true);
+  		return auth;
+  
+  	}
+      
+  }
+  
+  public class DefaultTokenServices 
+      implements AuthorizationServerTokenServices, ResourceServerTokenServices,
+  		ConsumerTokenServices, InitializingBean {
+        
+      public OAuth2Authentication loadAuthentication(String accessTokenValue) 
+          throws AuthenticationException,InvalidTokenException {
+          //根据accessToken获取OAuth2AccessToken
+  		OAuth2AccessToken accessToken = tokenStore.readAccessToken(accessTokenValue);
+  		if (accessToken == null) {
+  			throw new InvalidTokenException("Invalid access token: ");
+  		}else if (accessToken.isExpired()) {
+              //过期移除
+  			tokenStore.removeAccessToken(accessToken);
+  			throw new InvalidTokenException("Access token expired: ");
+  		}
+  
+          //读取认证信息
+  		OAuth2Authentication result = tokenStore.readAuthentication(accessToken);
+  		if (result == null) {
+  			throw new InvalidTokenException("Invalid access token: ");
+  		}
+          //判断clientId的合法性
+  		if (clientDetailsService != null) {
+  			String clientId = result.getOAuth2Request().getClientId();
+  			try {
+  				clientDetailsService.loadClientByClientId(clientId);
+  			}
+  			catch (ClientRegistrationException e) {
+  				throw new InvalidTokenException("Client not valid: " + clientId, e);
+  			}
+  		}
+  		return result;
+  	}        
+      
+  }
   ```
 
   
+
+-  **FilterChain**
+
+  - **WebAsyncManagerIntegrationFilter**：异步方式
+  - **SecurityContextPersistenceFilter**：同步方式
+  - ***HeaderWriterFilter***：用来给http响应添加一些Header
+  - ***CsrfFilter***：默认开启，用于防止csrf攻击的过滤器
+  - ***LogoutFilter***：处理注销的过滤器
+  - ***UsernamePasswordAuthenticationFilter***：调用的AuthenticationManager.authenticate()方法
+  - **DefaultLoginPageGeneratingFilter**：默认登录页面
+  - **DefaultLogoutPageGeneratingFilter**：默认登出页面
+  - ***BasicAuthenticationFilter***：默认HTTP authorization
+  - ***RequestCacheAwareFilter***：内部维护了一个RequestCache，用于缓存request请求
+  - ***SecurityContextHolderAwareRequestFilter***：使得request具有更加丰富的API
+  - ***AnonymousAuthenticationFilter***：匿名身份过滤器，spring security为了兼容未登录的访问
+  - ***SessionManagementFilter***：session相关的过滤器
+  - ***ExceptionTranslationFilter***：异常转换过滤器
+  - ***FilterSecurityInterceptor***：访问特定路径应该具备的权限
 
 - 
 
