@@ -127,6 +127,16 @@ public enum Isolation {
 }
 ```
 
+##### 1-6.事务失效
+
+-  **底层数据库引擎不支持事务**
+-  **非public方法修饰**
+-  **try catch了异常，异常没有抛出**
+-  **方法中调用同类的方法** ： 即this.method(),因为@Transactional是生成代理类，同类代码调用时，相当于this
+       没有使用代理类，所以不生效
+-  **rollbackFor和noRollbackFor属性设置错误**： 指定错误异常
+-  **propagation属性设置错误**
+
 ### 2. MYSQL的日志
 
 ```

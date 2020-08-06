@@ -2048,4 +2048,676 @@ ResourceServerTokenServices:
 
 ## 3.服务间调用
 
-​		
+### 3-1.Feign/Ribbon/Hystrix
+
+#### Feign的启动：
+
+```
+实现 ImportBeanDefinitionRegistrar，spring启动时加载
+1.注入相关的配置bean 
+2.scan包下下所有配置@FeignClint的类（FeignClientFactoryBean）并注入
+```
+
+```java
+class FeignClientsRegistrar{   
+
+        @Override
+        public void registerBeanDefinitions(AnnotationMetadata metadata,
+                BeanDefinitionRegistry registry) {    
+            //注册配置
+            registerDefaultConfiguration(metadata, registry);
+            //注入@FeignClient(FeignClientFactoryBean)实例 
+            //通过FeignClientFactoryBean实现了FactoryBean
+            //在spring注入调用的是getObject方法返回对象
+            registerFeignClients(metadata, registry);
+        }              
+
+}
+```
+
+#### Feign的流程：
+
+1. @FeignClient远程调用接口
+2. 通过动态代理JAVA Proxy，实现远程接口调用（ReflectiveFeign）,使用Hystrix(HystrixFeign.build())
+3. 根据API的方法实例，进行MethodHandler方法处理调用（InvocationHandler/HystrixInvocationHandler）
+4. MethodHandler处理(SynchronousMethodHandler)
+5. 构造RestTemplate （ReflectiveFeign.create）
+6. Encode 
+7. Interceptors/logger,请求和返回的拦截处理与日志记录
+8. feign.Client,基于负载均衡/重试/不同HTTP框架发送请求
+9. Decode
+
+#### @FeignClient：
+
+```java
+@FeignClient(name = "user", path = "/user")
+public interface UserApi {
+
+    @GetMapping("/{userId}")
+    ResultBean<AuthUser> getUserById(@PathVariable Integer userId);
+
+}
+```
+
+#### 动态代理@FeignClient：
+
+```java
+public class ReflectiveFeign extends Feign {
+
+    public <T> T newInstance(Target<T> target) {
+    Map<String, MethodHandler> nameToHandler = targetToHandlersByName.apply(target);
+    Map<Method, MethodHandler> methodToHandler 
+        = new LinkedHashMap<Method, MethodHandler>();
+    List<DefaultMethodHandler> defaultMethodHandlers 
+        = new LinkedList<DefaultMethodHandler>();
+
+    for (Method method : target.type().getMethods()) {
+      if (method.getDeclaringClass() == Object.class) {
+        continue;
+      } else if (Util.isDefault(method)) {
+        DefaultMethodHandler handler = new DefaultMethodHandler(method);
+        defaultMethodHandlers.add(handler);
+        methodToHandler.put(method, handler);
+      } else {
+        methodToHandler.put(method, 
+                            nameToHandler.get(Feign.configKey(target.type(), method)));
+      }
+    }
+    //创建InvocationHandler
+    InvocationHandler handler = factory.create(target, methodToHandler);
+    //Proxy.newProxyInstance():java动态代理
+    //loader:一个ClassLoader对象，定义了由哪个ClassLoader对象来对生成的代理对象进行加载
+    //interfaces:一个Interface对象的数组，表示的是我将要给我需要代理的对象提供一组什么接口
+    //h: 动态代理对象在调用方法的时候，会关联到哪一个InvocationHandler对象上
+    T proxy = (T) Proxy.newProxyInstance(target.type().getClassLoader(),
+        new Class<?>[] {target.type()}, handler);
+
+    for (DefaultMethodHandler defaultMethodHandler : defaultMethodHandlers) {
+      defaultMethodHandler.bindTo(proxy);
+    }
+    return proxy;
+  }
+}
+
+//Hystrix
+Feign build(final FallbackFactory<?> nullableFallbackFactory) {
+      super.invocationHandlerFactory(new InvocationHandlerFactory() {
+        @Override
+        public InvocationHandler create(Target target,
+                                        Map<Method, MethodHandler> dispatch) {
+          return new HystrixInvocationHandler(target, dispatch, setterFactory,
+              nullableFallbackFactory);
+        }
+      });
+      super.contract(new HystrixDelegatingContract(contract));
+      return super.build();
+}
+```
+
+#### MethodHandler处理：
+
+```java
+static class FeignInvocationHandler implements InvocationHandler {
+	//存储了哪个方法对应的MethodHandler(方法实例对象-方法处理器)
+    private final Map<Method, MethodHandler> dispatch;
+    
+    @Override
+    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+      if ("equals".equals(method.getName())) {
+        try {
+          Object otherHandler =
+              args.length > 0 && args[0] != null ? 
+              Proxy.getInvocationHandler(args[0]) : null;
+            
+          return equals(otherHandler);
+        } catch (IllegalArgumentException e) {
+          return false;
+        }
+      } else if ("hashCode".equals(method.getName())) {
+        return hashCode();
+      } else if ("toString".equals(method.getName())) {
+        return toString();
+      }
+	  //动态代理请求
+      return dispatch.get(method).invoke(args);
+    }
+    
+}
+
+//hystrix处理器
+final class HystrixInvocationHandler implements InvocationHandler {
+    
+    @Override
+  public Object invoke(final Object proxy, final Method method, final Object[] args)
+      throws Throwable {
+    //equals,hashCode,toString方法不拦截
+    if ("equals".equals(method.getName())) {
+      try {
+        Object otherHandler =
+            args.length > 0 && args[0] != null ? 
+            Proxy.getInvocationHandler(args[0]) : null;
+        return equals(otherHandler);
+      } catch (IllegalArgumentException e) {
+        return false;
+      }
+    } else if ("hashCode".equals(method.getName())) {
+      return hashCode();
+    } else if ("toString".equals(method.getName())) {
+      return toString();
+    }
+
+    HystrixCommand<Object> hystrixCommand =
+        new HystrixCommand<Object>(setterMethodMap.get(method)) {
+          @Override
+          protected Object run() throws Exception {
+            try {
+              //动态代理请求
+              return HystrixInvocationHandler.this.dispatch.get(method).invoke(args);
+            } catch (Exception e) {
+              throw e;
+            } catch (Throwable t) {
+              throw (Error) t;
+            }
+          }
+
+          @Override
+          protected Object getFallback() {
+            if (fallbackFactory == null) {
+              return super.getFallback();
+            }
+            try {
+              Object fallback = fallbackFactory.create(getExecutionException());
+              Object result = fallbackMethodMap.get(method).invoke(fallback, args);
+              if (isReturnsHystrixCommand(method)) {
+                return ((HystrixCommand) result).execute();
+              } else if (isReturnsObservable(method)) {
+                // Create a cold Observable
+                return ((Observable) result).toBlocking().first();
+              } else if (isReturnsSingle(method)) {
+                // Create a cold Observable as a Single
+                return ((Single) result).toObservable().toBlocking().first();
+              } else if (isReturnsCompletable(method)) {
+                ((Completable) result).await();
+                return null;
+              } else if (isReturnsCompletableFuture(method)) {
+                return ((Future) result).get();
+              } else {
+                return result;
+              }
+            } catch (IllegalAccessException e) {
+              // shouldn't happen as method is public due to being an interface
+              throw new AssertionError(e);
+            } catch (InvocationTargetException | ExecutionException e) {
+              // Exceptions on fallback are tossed by Hystrix
+              throw new AssertionError(e.getCause());
+            } catch (InterruptedException e) {
+              // Exceptions on fallback are tossed by Hystrix
+              Thread.currentThread().interrupt();
+              throw new AssertionError(e.getCause());
+            }
+          }
+        };
+
+    //根据返回类型返回，可以返回异步结果，或者自己订阅
+    if (Util.isDefault(method)) {
+      return hystrixCommand.execute();
+    } else if (isReturnsHystrixCommand(method)) {
+      return hystrixCommand;
+    } else if (isReturnsObservable(method)) {
+      return hystrixCommand.toObservable();
+    } else if (isReturnsSingle(method)) {
+      return hystrixCommand.toObservable().toSingle();
+    } else if (isReturnsCompletable(method)) {
+      return hystrixCommand.toObservable().toCompletable();
+    } else if (isReturnsCompletableFuture(method)) {
+      return new ObservableCompletableFuture<>(hystrixCommand);
+    }
+    return hystrixCommand.execute();
+  }
+}
+```
+
+#### 编码/构造RequestTemplate
+
+```java
+//默认处理器
+final class SynchronousMethodHandler implements MethodHandler {
+    //构造RequestTemplate,编码
+    RequestTemplate template = buildTemplateFromArgs.create(argv);
+    Options options = findOptions(argv);
+    //重试次数
+    Retryer retryer = this.retryer.clone();
+    while (true) {
+      try {
+        //执行并解码
+        return executeAndDecode(template, options);
+      } catch (RetryableException e) {
+        try {
+          retryer.continueOrPropagate(e);
+        } catch (RetryableException th) {
+          Throwable cause = th.getCause();
+          if (propagationPolicy == UNWRAP && cause != null) {
+            throw cause;
+          } else {
+            throw th;
+          }
+        }
+        if (logLevel != Logger.Level.NONE) {
+          logger.logRetry(metadata.configKey(), logLevel);
+        }
+        continue;
+      }
+    }
+    
+}
+
+private static class BuildEncodedTemplateFromArgs extends BuildTemplateByResolvingArgs {
+
+    private final Encoder encoder;
+
+    @Override
+    protected RequestTemplate resolve(Object[] argv,
+                                      RequestTemplate mutable,
+                                      Map<String, Object> variables) {
+      Object body = argv[metadata.bodyIndex()];
+      try {
+        encoder.encode(body, metadata.bodyType(), mutable);
+      }
+      return super.resolve(argv, mutable, variables);
+    }
+  }
+```
+
+#### 请求拦截/日志处理/解码：
+
+```java
+//执行请求并解码
+Object executeAndDecode(RequestTemplate template, Options options) throws Throwable {
+	//拦截处理
+    Request request = targetRequest(template);
+    //执行请求
+    response = client.execute(request, options);
+    if (response.status() >= 200 && response.status() < 300) {
+        if (void.class == metadata.returnType()) {
+          return null;
+        } else {
+           //返回成功并且不是void解码
+          Object result = decode(response);
+          shouldClose = closeAfterDecode;
+          return result;
+        }
+      }
+}
+
+//拦截处理
+Request targetRequest(RequestTemplate template) {
+    for (RequestInterceptor interceptor : requestInterceptors) {
+      interceptor.apply(template);
+    }
+    //默认判一下url
+    return target.apply(template);
+}
+
+//解码处理
+Object decode(Response response) throws Throwable {
+    try {
+      return decoder.decode(response, metadata.returnType());
+    }
+ }
+```
+
+#### feign.Client：
+
+**client类型：**
+
+- **Client.Default：**默认的feign.Client 客户端实现类，内部使用HttpURLConnnection 完成URL请求处理
+- **ApacheHttpClient：**使用 Apache httpclient 开源组件完成URL请求处理
+- **OkHttpClient:**内部使用 OkHttp3 开源组件完成URL请求处理
+- **LoadBalancerFeignClient ：**内部使用 Ribben 负载均衡技术完成URL请求处理的feign.Client 客户端实现类
+
+```java
+public interface Client {
+	Response execute(Request request, Options options) throws IOException;
+}
+```
+
+### Hystrix的实现
+
+feign调用时会指定使用HystrixInvocationHandler，会构造一个HystrixCommand
+
+```java
+public abstract class HystrixCommand<R> extends AbstractCommand<R> implements HystrixExecutable<R>, HystrixInvokableInfo<R>, HystrixObservable<R> {
+	
+     public Future<R> queue() {
+         //阻塞获取结果
+         final Future<R> delegate = toObservable().toBlocking().toFuture();
+         
+         @Override
+         public R get() throws InterruptedException, ExecutionException {
+            return delegate.get();
+         }
+     }
+  	
+    //Request缓存
+    protected final HystrixRequestCache requestCache;
+    
+    //主要方法
+    public Observable<R> toObservable() {
+        return Observable.defer(()->{
+            //CAS操作(讲初始的未开始状态设置成为订阅链创建状态)
+            if (!commandState.compareAndSet(
+                CommandState.NOT_STARTED, CommandState.OBSERVABLE_CHAIN_CREATED)) {
+               //.... 
+            }
+            //是否启用缓存
+            final boolean requestCacheEnabled = isRequestCachingEnabled();
+            final String cacheKey = getCacheKey();
+           	//尝试从缓存中获取
+            if (requestCacheEnabled) {
+         		//从缓存中获取Response
+                HystrixCommandResponseFromCache<R> fromCache 
+                        = requestCache.get(cacheKey);
+                if (fromCache != null) {
+                     //返回结果
+                     isResponseFromCache = true;
+                     return handleRequestCacheHitAndEmitValues(fromCache, _cmd);
+                }	
+            }
+            
+            //请求调用链
+            Observable<R> hystrixObservable =
+                        Observable.defer(applyHystrixSemantics)
+                                .map(wrapWithAllOnNextHooks);
+            
+            if (requestCacheEnabled && cacheKey != null) {
+                //若设置了开启缓存，但是缓存中没有取到Response
+                //执行
+                HystrixCachedObservable<R> toCache 
+                     = HystrixCachedObservable.from(hystrixObservable, _cmd);
+                //存入缓存Map
+                HystrixCommandResponseFromCache<R> fromCache 
+                        = requestCache.putIfAbsent(cacheKey, toCache);
+                if (fromCache != null) {
+                     //其他线程先完成了，取消订阅，不执行了,并直接返回结果
+                     toCache.unsubscribe();
+                     isResponseFromCache = true;
+                     return handleRequestCacheHitAndEmitValues(fromCache, _cmd);
+                } else {
+ 					 //直接调用请求链
+                     afterCache = toCache.toObservable();
+                }
+            }else {
+                //直接调用请求链
+                afterCache = hystrixObservable;
+            }
+        });
+    }
+}
+
+//开始执行调用链
+final Func0<Observable<R>> applyHystrixSemantics = new Func0<Observable<R>>() {
+            @Override
+            public Observable<R> call() {
+                //当前已经是OBSERVABLE_CHAIN_CREATED状态了
+                if (commandState.get().equals(CommandState.UNSUBSCRIBED)) {
+                    return Observable.never();
+                }
+                return applyHystrixSemantics(_cmd);
+            }
+ };
+
+private Observable<R> applyHystrixSemantics(final AbstractCommand<R> _cmd) {
+      	//开启钩子
+        executionHook.onStart(_cmd);
+
+        //判断是否熔断
+        if (circuitBreaker.allowRequest()) {
+            //获取信号用
+            final TryableSemaphore executionSemaphore = getExecutionSemaphore();
+            final AtomicBoolean semaphoreHasBeenReleased = new AtomicBoolean(false);
+            //超时处理
+            final Action0 singleSemaphoreRelease = new Action0() {
+                @Override
+                public void call() {
+                    //释放信号量
+                    if (semaphoreHasBeenReleased.compareAndSet(false, true)) {
+                        executionSemaphore.release();
+                    }
+                }
+            };
+			//异常处理
+            final Action1<Throwable> markExceptionThrown = new Action1<Throwable>() {
+                @Override
+                public void call(Throwable t) {
+                    eventNotifier.markEvent(
+                        HystrixEventType.EXCEPTION_THROWN, commandKey);
+                }
+            };
+			//尝试获取信号量
+            if (executionSemaphore.tryAcquire()) {
+                try {
+                    executionResult = executionResult
+                        .setInvocationStartTime(System.currentTimeMillis());
+                    //开始执行订阅cmd，真正的调用SynchronousMethodHandler请求
+                    return executeCommandAndObserve(_cmd)
+                            .doOnError(markExceptionThrown)
+                        	//超时降级或者抛异常，发送信息给熔断器统计
+                            .doOnTerminate(singleSemaphoreRelease)
+                            .doOnUnsubscribe(singleSemaphoreRelease);
+                } catch (RuntimeException e) {
+                    return Observable.error(e);
+                }
+            } else {
+                //信用量满了，降级或者抛异常，发送信息给熔断器统计
+                return handleSemaphoreRejectionViaFallback();
+            }
+        } else {
+            //已经熔断，降级或者抛异常
+            return handleShortCircuitViaFallback();
+        }
+    }
+```
+
+#### 调用 fallback 降级机制：
+
+- 断路器处于打开状态
+- 线程池/队列/semaphore满了
+- command 执行超时
+- run() 或者 construct() 抛出异常
+
+#### Hystrix流程：
+
+1. **修改Command状态:**（NOT_STARTED->OBSERVABLE_CHAIN_CREATED）
+
+2. **判断是否开始了RequestCache: ** hystrix.requestCache.enabled (默认开启)
+   2-1. **若开启了缓存，重写了getCacheKey()的规则**，requestCache中没有则，再进行一次判断
+          ，判断是否有其他线程先执行，若有取消订阅直接返回结果，没有直接添加请求调用链
+
+   2-2.**没有开启缓存**,直接添加调用链（hystrixObservable）
+
+3. **判断开启熔断：**若已经熔断，直接降级处理
+
+4. **尝试获取信号量：**获取到信号量执行线程，线程中会执行请求
+
+####  断路健康检查  :
+
+```java
+@Override
+public boolean isOpen() {
+    if (circuitOpen.get()) {
+        //熔断已经启动
+        return true;
+    }
+
+    // 获取健康检查
+    HealthCounts health = metrics.getHealthCounts();
+
+    //总请求数与最小跳匝（不够频繁）
+    if (health.getTotalRequests() < properties
+        .circuitBreakerRequestVolumeThreshold().get()) {
+        return false;
+    }
+
+    //错误次数
+    if (health.getErrorPercentage() < properties
+        .circuitBreakerErrorThresholdPercentage().get()) {
+        return false;
+    } else {
+       	//错误率太高
+        if (circuitOpen.compareAndSet(false, true)) {
+            circuitOpenedOrLastTestedTime.set(System.currentTimeMillis());
+            return true;
+        } else {
+            return true;
+        }
+    }
+}		
+```
+
+### Ribbon的实现
+
+```java
+public class LoadBalancerFeignClient implements Client {
+
+    @Override
+	public Response execute(Request request, Request.Options options) 
+        throws IOException {
+		try {
+			URI asUri = URI.create(request.url());
+			String clientName = asUri.getHost();
+			URI uriWithoutHost = cleanUrl(request.url(), clientName);
+            //构造请求，这里ribbonRequest：GET http:///sayHello/wangmeng HTTP/1.1 
+			FeignLoadBalancer.RibbonRequest ribbonRequest
+                = new FeignLoadBalancer.RibbonRequest(
+					this.delegate, request, uriWithoutHost);
+
+            //这里面config只有两个超时时间，一个是connectTimeout：5000，一个是readTimeout：5000
+			IClientConfig requestConfig = getClientConfig(options, clientName);
+            //真正执行负载均衡的地方
+			return lbClient(clientName)
+					.executeWithLoadBalancer(ribbonRequest, requestConfig).toResponse();
+		}
+		catch (ClientException e) {
+			IOException io = findIOException(e);
+			if (io != null) {
+				throw io;
+			}
+			throw new RuntimeException(e);
+		}
+	}
+    
+    //负载均衡
+    public FeignLoadBalancer create(String clientName) {
+        //cache缓存
+		FeignLoadBalancer client = this.cache.get(clientName);
+		if (client != null) {
+			return client;
+		}
+		IClientConfig config = this.factory.getClientConfig(clientName);
+        //lb里包含所有节点的信息
+		ILoadBalancer lb = this.factory.getLoadBalancer(clientName);
+		ServerIntrospector serverIntrospector = this.factory.getInstance(clientName,
+				ServerIntrospector.class);
+		client = this.loadBalancedRetryFactory != null
+            	//可重试
+				? new RetryableFeignLoadBalancer(lb, config, serverIntrospector,
+						this.loadBalancedRetryFactory)
+            	//正常的
+				: new FeignLoadBalancer(lb, config, serverIntrospector);
+		this.cache.put(clientName, client);
+		return client;
+	}
+    
+    public T executeWithLoadBalancer(
+        final S request, final IClientConfig requestConfig) 
+        throws ClientException {
+        
+        LoadBalancerCommand<T> command 
+            = buildLoadBalancerCommand(request, requestConfig);
+
+        try {
+            return command.submit(
+                new ServerOperation<T>() {
+                    @Override
+                    public Observable<T> call(Server server) {
+                        URI finalUri 
+                            = reconstructURIWithServer(server, request.getUri());
+                        S requestForServer = (S) request.replaceUri(finalUri);
+                        try {
+                            return Observable
+                                .just(AbstractLoadBalancerAwareClient
+                                      .this.execute(requestForServer, requestConfig));
+                        } 
+                        catch (Exception e) {
+                            return Observable.error(e);
+                        }
+                    }
+                })
+                .toBlocking()
+                .single();
+        } catch (Exception e) {
+            Throwable t = e.getCause();
+            if (t instanceof ClientException) {
+                throw (ClientException) t;
+            } else {
+                throw new ClientException(e);
+            }
+        }
+        
+    }
+    
+}
+
+public class LoadBalancerCommand<T> {
+    
+    public Observable<T> submit(final ServerOperation<T> operation) {
+        
+        Observable<T> o = 
+            	//选择实例
+                (server == null ? selectServer() : Observable.just(server));
+        
+    }
+    
+    private Observable<Server> selectServer() {
+        return Observable.create(new OnSubscribe<Server>() {
+            @Override
+            public void call(Subscriber<? super Server> next) {
+                try {
+                    Server server
+                        = loadBalancerContext
+                        .getServerFromLoadBalancer(loadBalancerURI, loadBalancerKey);   
+                    next.onNext(server);
+                    next.onCompleted();
+                } catch (Exception e) {
+                    next.onError(e);
+                }
+            }
+        });
+    }
+    
+    public Server getServerFromLoadBalancer(@Nullable URI original, @Nullable Object loadBalancerKey) throws ClientException {
+        ILoadBalancer lb = getLoadBalancer();
+        if (host == null) {
+            if (lb != null){
+                //选择实例
+                Server svc = lb.chooseServer(loadBalancerKey);
+                if (svc == null){
+                    throw new ClientException(ClientException.ErrorType.GENERAL);
+                }
+                host = svc.getHost();
+                if (host == null){
+                    throw new ClientException(ClientException.ErrorType.GENERAL;
+                }
+                return svc;
+            }
+    }
+}
+```
+
+####    负载Rule
+
+-  **RetryRule：**
+-  **RoundRobinRule：**基本的负载均衡策略，即循环赛规则
+-  **WeightedResponseTimeRule：**加权轮循
+
+   
