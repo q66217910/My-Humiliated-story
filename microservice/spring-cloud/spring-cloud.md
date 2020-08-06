@@ -1609,7 +1609,16 @@ Outh2提供的令牌存储策略:
   	}
   ```
   
-- **Endpoint**
+-  **ResourceServerTokenServices**
+
+  ```
+ResourceServerTokenServices:
+  	DefaultTokenServices:使用随机UUID值令牌访问令牌服务，并刷新标记值
+  	RemoteTokenServices:查询/ check_token端点，以获得访问令牌的内容。
+  	UserInfoTokenServices: 使用用户信息REST服务。
+  ```
+  
+- Endpoint**
 
   获取accessToken
 
@@ -2037,3 +2046,6 @@ Outh2提供的令牌存储策略:
 
   
 
+## 3.服务间调用
+
+​		
