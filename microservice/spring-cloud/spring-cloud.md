@@ -1392,7 +1392,441 @@
       }
   ```
 
+
+### 1-2. NACOS
+
+```
+nacos的服务发现：
+	1.基于raft协议
+	2.变化通知采用的udp
+```
+
+#### Raft
+
+```
+Term : 选举的届数
+RaftStore：日志log
+RaftPeerSet： 所有节点（leader）
+RaftPeer：每一个节点
+```
+
+- **Raft节点:**
+
+  ```java
+  public class RaftPeer {
+  	
+      public String ip;//ip地址
+      
+      public String voteFor;//投票
+      
+      public AtomicLong term = new AtomicLong(0L);//选举届数
+      
+      //leader到期时间（重新发起选举）
+      public volatile long leaderDueMs 
+          = RandomUtils.nextLong(0, GlobalExecutor.LEADER_TIMEOUT_MS);
+      
+      //心跳间隔时间
+      public volatile long heartbeatDueMs 
+          = RandomUtils.nextLong(0, GlobalExecutor.HEARTBEAT_INTERVAL_MS);
+      
+      public volatile State state = State.FOLLOWER;//节点状态
+      
+      public enum State {
+          /**
+           * Leader of the cluster, only one leader stands in a cluster.
+           */
+          LEADER,
+          /**
+           * Follower of the cluster, report to and copy from leader.
+           */
+          FOLLOWER,
+          /**
+           * Candidate leader to be elected.
+           */
+          CANDIDATE
+      }
+  }
+  ```
+
+- **Raft启动:**
+
+  ```java
+  @DependsOn("ProtocolManager")
+  @Component
+  public class RaftCore {
+  	
+      @PostConstruct
+      public void init() throws Exception {
+          //执行通知
+          executor.submit(notifier);
+          
+          final long start = System.currentTimeMillis();
+          //从log文件加载数据（raftStore）
+          raftStore.loadDatums(notifier, datums);
+          //设置当前的选届
+          setTerm(NumberUtils.toLong(raftStore.loadMeta().getProperty("term"), 0L));
+          
+          //处理所有通知任务
+          while (true) {
+              if (notifier.tasks.size() <= 0) {
+                  break;
+              }
+              Thread.sleep(1000L);
+          }
+          //初始化标识
+          initialized = true;
+          
+          //选举
+          GlobalExecutor.registerMasterElection(new MasterElection());
+          //心跳
+          GlobalExecutor.registerHeartbeat(new HeartBeat());
+      }
+      
+  }
+  ```
+
+- **Raft心跳:**
+
+  raft的leader节点每隔一段时间会给所有的follower发送心跳，若follower长时间没有收到leader的心跳
+
+  会认为leader挂了，重新发起选举
+
+  ```java
+  public class HeartBeat implements Runnable {
+  	
+     @Override
+      public void run() {
+          try {
+              //节点是否存在
+              if (!peers.isReady()) {
+                  return;
+              }
+              //获取当前节点
+              RaftPeer local = peers.local();
+              
+              //判断是否达到心跳时间
+              local.heartbeatDueMs -= GlobalExecutor.TICK_PERIOD_MS;
+              if (local.heartbeatDueMs > 0) {
+                  return;
+              }
+              //重置心跳时间
+              local.resetHeartbeatDue();
+              //发送心跳
+              sendBeat();
+          } catch (Exception e) {
+              Loggers.RAFT.warn("[RAFT] error while sending beat {}", e);
+          }
+          
+      }
+      
+      private void sendBeat() throws IOException{
+          //获取本地节点
+          RaftPeer local = peers.local();
+          //非单机节点并且是Leader节点才能发送心跳
+          if (ApplicationUtils.getStandaloneMode() 
+              || local.state != RaftPeer.State.LEADER) {
+                  return;
+          }
+          //重设leader超时时间
+          local.resetLeaderDue();
+          
+          //创建Node对象 (peer节点为本地的节点对象)
+          ObjectNode packet = JacksonUtils.createEmptyJsonNode();
+          packet.replace("peer", JacksonUtils.transferToJsonNode(local));
+          ArrayNode array = JacksonUtils.createEmptyArrayNode();
+          packet.replace("datums", array);
+          
+          //广播（构造参数并压缩）
+          Map<String, String> params = new HashMap<String, String>(1);
+          params.put("beat", JacksonUtils.toJson(packet));
+          String content = JacksonUtils.toJson(params);
+          ByteArrayOutputStream out = new ByteArrayOutputStream();
+          GZIPOutputStream gzip = new GZIPOutputStream(out);
+          gzip.write(content.getBytes(StandardCharsets.UTF_8));
+          gzip.close();
+              
+          byte[] compressedBytes = out.toByteArray();
+          String compressedContent 
+              = new String(compressedBytes, StandardCharsets.UTF_8);
+          
+          //遍历所有节点除了当前节点
+          for (final String server : peers.allServersWithoutMySelf()) {
+              try {
+                  //（/raft/beat）
+                  final String url = buildUrl(server, API_BEAT);
+                  //发送请求
+                  HttpClient.asyncHttpPostLarge(
+                     url, null, compressedBytes, new AsyncCompletionHandler<Integer>() {
+                        @Override
+                        public Integer onCompleted(Response response) throws Exception {
+                            if (response.getStatusCode() != HttpURLConnection.HTTP_OK) {
+                                //响应不成功，记录心跳失败	
+                                MetricsMonitor.getLeaderSendBeatFailedException()
+                                      .increment();
+                                  return 1;
+                              }
+                              //更新foller节点信息
+                             peers.update(JacksonUtils
+                                          .toObj(response.getResponseBody()
+                                                 , RaftPeer.class));
+                              
+                              return 0;
+                          }
+                          
+                          @Override
+                          public void onThrowable(Throwable t) {
+                              MetricsMonitor.getLeaderSendBeatFailedException()
+                                  .increment();
+                          }
+                      });
+              }catch (Exception e) {
+                  
+              }
+          }
+      }
+  }
+  ```
+
+  客户端接收
+
+  ```java
+  @RestController
+  @RequestMapping(UtilsAndCommons.NACOS_NAMING_CONTEXT + "/instance")
+  public class InstanceController {
+      
+      @PostMapping("/beat")
+      public JsonNode beat(HttpServletRequest request
+                           , HttpServletResponse response) throws Exception {
+          
+          //解压
+          String entity 
+              = new String(IoUtils.tryDecompress(request.getInputStream())
+                           , StandardCharsets.UTF_8);
+          
+          String value = URLDecoder.decode(entity, "UTF-8");
+          value = URLDecoder.decode(value, "UTF-8");
+          
+          JsonNode json = JacksonUtils.toObj(value);
+          
+          //处理心跳
+          RaftPeer peer 
+              = raftCore.receivedBeat(JacksonUtils.toObj(json.get("beat").asText()));
+          
+          return JacksonUtils.transferToJsonNode(peer);
+      }
+      
+      //处理心跳
+      public RaftPeer receivedBeat(JsonNode beat) throws Exception {
+          final RaftPeer local = peers.local();
+          final RaftPeer remote = new RaftPeer();
+          //设置leader的节点数据
+          JsonNode peer = beat.get("peer");
+          remote.ip = peer.get("ip").asText();
+          remote.state = RaftPeer.State.valueOf(peer.get("state").asText());
+          remote.term.set(peer.get("term").asLong());
+          remote.heartbeatDueMs = peer.get("heartbeatDueMs").asLong();
+          remote.leaderDueMs = peer.get("leaderDueMs").asLong();
+          remote.voteFor = peer.get("voteFor").asText();
+          
+          if (remote.state != RaftPeer.State.LEADER) {
+              //非leader节点的心跳，抛异常
+              throw new IllegalArgumentException();
+          }
+          if (local.term.get() > remote.term.get()) {
+              //当前节点 选届大于 leader节点的选届，抛异常
+              throw new IllegalArgumentException();
+          }
+          if (local.state != RaftPeer.State.FOLLOWER) {
+              //当前节点不是FOLLOWER,改为FOLLOWER节点
+              local.state = RaftPeer.State.FOLLOWER;
+              local.voteFor = remote.ip;
+          }
+          
+          //更新时间
+          final JsonNode beatDatums = beat.get("datums");
+          local.resetLeaderDue();
+          local.resetHeartbeatDue();
+          
+          //将leader设置为新的candidate
+          peers.makeLeader(remote);
+      }
+  }
+  ```
+
+-  **发布新记录:**
+
+  ```java
+  public class RaftCore {
   
+       public void signalPublish(String key, Record value) throws Exception {
+           
+           if (!isLeader()) {
+              //若当前节点不是leader节点
+              ObjectNode params = JacksonUtils.createEmptyJsonNode();
+              params.put("key", key);
+              params.replace("value", JacksonUtils.transferToJsonNode(value));
+              Map<String, String> parameters = new HashMap<>(1);
+              parameters.put("key", key);
+              
+              //转发到leader节点
+              final RaftPeer leader = getLeader();
+              raftProxy
+                  .proxyPostLarge(leader.ip, API_PUB, params.toString(), parameters);
+              return;
+          }
+           
+          try {
+              OPERATE_LOCK.lock();
+              final long start = System.currentTimeMillis();
+              final Datum datum = new Datum();
+          }
+       }
+      
+  }
+  ```
+
+- 1
+
+### **服务注册与发现**（naming模块）
+
+- **实例参数**
+
+  ```java
+  @JsonInclude(Include.NON_NULL)
+  public class Instance {
+  	
+      private String instanceId;//实例唯一id
+      
+      private String ip;//实例ip地址
+      
+      private int port;//实例端口号
+      
+      private double weight = 1.0D;//权重
+      
+      private boolean healthy = true;//健康状态
+      
+      private boolean enabled = true;//实例是否能接受请求
+      
+      private boolean ephemeral = true;//实例是否持久化(true CP模式，false AP模式)
+      
+      private String clusterName; //集群名称
+      
+      private String serviceName;//实例服务名
+      
+      private Map<String, String> metadata = new HashMap<String, String>();//自定义元数据
+  }
+  ```
+
+- **服务注册:**
+
+  客户端启动注册服务
+
+  ```java
+  public interface NamingService {
+  
+      //注册一个实例给服务
+      void registerInstance(String serviceName, String groupName, String ip, int port)   
+      void registerInstance(String serviceName, String ip, int port, String clusterName)
+      void registerInstance(String serviceName, String groupName, String ip
+                            , int port, String clusterName)
+      void registerInstance(String serviceName, Instance instance)
+      void registerInstance(String serviceName, String groupName, Instance instance)    
+      
+      //注销一个实例在服务
+      void deregisterInstance(String serviceName, String ip, int port)
+      void deregisterInstance(String serviceName, String groupName, String ip, int port)
+      void deregisterInstance(String serviceName, String ip,int port,String clusterName)     void deregisterInstance(String serviceName, String groupName, String ip, int port, String clusterName)
+      void deregisterInstance(String serviceName, Instance instance) 
+      void deregisterInstance(String serviceName, String groupName, Instance instance)
+          
+      //获取一个服务的所有实例
+      List<Instance> getAllInstances(String serviceName)
+      List<Instance> getAllInstances(String serviceName, String groupName)
+      List<Instance> getAllInstances(String serviceName, boolean subscribe)
+      List<Instance> getAllInstances(String serviceName, String groupName, boolean subscribe) 
+      List<Instance> getAllInstances(String serviceName, List<String> clusters)
+          
+  }
+  
+  public class NacosNamingService implements NamingService {
+      
+      @Override
+      public void registerInstance(String serviceName, String groupName,
+                                   Instance instance) throws NacosException {
+          //获取groupName
+          String groupedServiceName 
+              = NamingUtils.getGroupedName(serviceName, groupName);
+          //判断是AP还是CP
+          if (instance.isEphemeral()) {
+              //创建一个节点信息
+              BeatInfo beatInfo 
+                  = beatReactor.buildBeatInfo(groupedServiceName, instance);
+              beatReactor.addBeatInfo(groupedServiceName, beatInfo);
+          }
+          //注册服务
+          serverProxy.registerService(groupedServiceName, groupName, instance);
+      }
+  }
+  ```
+
+  服务端接受注册请求
+
+  ```java
+  @Component
+  public class ServiceManager implements RecordListener<Service> {
+  	
+      public void registerInstance(String namespaceId, String serviceName,
+                                   Instance instance) throws NacosException {
+          
+          createEmptyService(namespaceId, serviceName, instance.isEphemeral());
+          //获取服务(Map(namespace, Map(group::serviceName, Service)).)
+          Service service = getService(namespaceId, serviceName);
+          
+          if (service == null) {
+              throw new NacosException(NacosException.INVALID_PARAM);
+          }
+          //注册	
+          addInstance(namespaceId, serviceName, instance.isEphemeral(), instance);
+      }
+      
+      //添加注册
+      public void addInstance(String namespaceId, String serviceName,
+                              boolean ephemeral, Instance... ips)
+              throws NacosException {
+          
+          String key 
+              = KeyBuilder.buildInstanceListKey(namespaceId, serviceName, ephemeral);
+          
+          Service service = getService(namespaceId, serviceName);
+          
+          synchronized (service) {
+              //获取该服务的所有实例
+              List<Instance> instanceList = addIpAddresses(service, ephemeral, ips);
+              
+              Instances instances = new Instances();
+              instances.setInstanceList(instanceList);
+              
+              consistencyService.put(key, instances);
+          }
+      }
+  }
+  
+  public class RaftConsistencyServiceImpl implements PersistentConsistencyService {
+      
+      @Override
+      public void put(String key, Record value) throws NacosException {
+          try {
+              //触发发布服务信号
+              raftCore.signalPublish(key, value);
+          } catch (Exception e) {
+              throw new NacosException(NacosException.SERVER_ERROR);
+          }
+      }
+      
+  }
+  ```
+
+- 
 
 ## 2.鉴权中心
 
