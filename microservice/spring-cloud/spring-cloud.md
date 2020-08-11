@@ -1476,9 +1476,9 @@ RaftPeer：每一个节点
           //初始化标识
           initialized = true;
           
-          //选举
+          //选举 500ms
           GlobalExecutor.registerMasterElection(new MasterElection());
-          //心跳
+          //心跳 500ms
           GlobalExecutor.registerHeartbeat(new HeartBeat());
       }
       
@@ -1647,7 +1647,7 @@ RaftPeer：每一个节点
           local.resetLeaderDue();
           local.resetHeartbeatDue();
           
-          //将leader设置为新的candidate
+          //将心跳请求的节点当前leader，并更新每个节点的状态
           peers.makeLeader(remote);
       }
   }
@@ -1678,14 +1678,274 @@ RaftPeer：每一个节点
           try {
               OPERATE_LOCK.lock();
               final long start = System.currentTimeMillis();
+              //Naming Service数据
               final Datum datum = new Datum();
+              datum.key = key;
+              datum.value = value;
+              if (getDatum(key) == null) {
+                  datum.timestamp.set(1L);
+              } else {
+                  datum.timestamp.set(getDatum(key).timestamp.incrementAndGet());
+              }
+              
+              ObjectNode json = JacksonUtils.createEmptyJsonNode();
+              json.replace("datum", JacksonUtils.transferToJsonNode(datum));
+              json.replace("source", JacksonUtils.transferToJsonNode(peers.local()));
+              
+              //发布消息
+              onPublish(datum, peers.local());
+              
+              final String content = json.toString();
+              //给所有的follower节点异步同步
+              final CountDownLatch latch = new CountDownLatch(peers.majorityCount());
+              for (final String server : peers.allServersIncludeMyself()) {
+                  if (isLeader(server)) {
+                      latch.countDown();
+                      continue;
+                  }
+                  final String url = buildUrl(server, API_ON_PUB);
+                  HttpClient.asyncHttpPostLarge(url, 
+                                                Arrays.asList("key=" + key), content,
+                          new AsyncCompletionHandler<Integer>() {
+                              @Override
+                              public Integer onCompleted(Response response){
+                                 if (response.getStatusCode()
+                                    != HttpURLConnection.HTTP_OK) {
+                   					return 1;
+                                  }
+                                  latch.countDown();
+                                  return 0;
+                              }
+                              
+                              @Override
+                              public STATE onContentWriteCompleted() {
+                                  return STATE.CONTINUE;
+                              }
+                          });
+              }
+          }finally {
+              OPERATE_LOCK.unlock();
           }
        }
+      
+      public void onPublish(Datum datum, RaftPeer source) throws Exception {
+          RaftPeer local = peers.local();
+          if (datum.value == null) {
+              throw new IllegalStateException("received empty datum");
+          }
+          if (!peers.isLeader(source.ip)) {
+              //leader节点不对
+              throw new IllegalStateException();
+          }
+          if (source.term.get() < local.term.get()) {
+              //选届不能小于leader的选届
+              throw new IllegalStateException()
+          }
+          local.resetLeaderDue();
+          //写日志
+          if (KeyBuilder.matchPersistentKey(datum.key)) {
+              raftStore.write(datum);
+          }
+          datums.put(datum.key, datum);
+          if (isLeader()) {
+              //写入后选届+100
+              local.term.addAndGet(PUBLISH_TERM_INCREASE_COUNT);
+          } else {
+              //follower节点
+              if (local.term.get() + PUBLISH_TERM_INCREASE_COUNT > source.term.get()) {
+      			//设置leader的选届
+                  getLeader().term.set(source.term.get());
+                  local.term.set(getLeader().term.get());
+              } else {
+                  local.term.addAndGet(PUBLISH_TERM_INCREASE_COUNT);
+              }
+          }
+      }
+  }
+  ```
+
+- **选举：**
+
+  1. 初始启动时所有节点会以follower角色启动
+  2. 在网络启动后，节点等待指定时长（TICK_PERIOD_MS，leader的心跳会重置，随机超时机制）
+  3. 发起预选举（发送一个自身任期+1的请求），预选举成功才会发起选举（为了防止出现网络隔离时，非leader节点选届过大，当分区正常，被选为leader，正常日志被覆盖）
+  4. 发起选举，节点把自己的角色转为Candidate，（自身的任期(term)+1 , 并为自己投一票，）
+  5. 给其他节点发送选举信息
+  6. 各个节点收到vote信息（ 一个选届只能选举一次，先来先得，会更新当前的选届为候选者选届 ）
+  7. 选举结束，获得超过半数选票的节点成为leader
+  8. beleader(),发送一个广播通知其他follower节点（其他节点也可以心跳时处理,将设置新的leader，更新其他节点信息）
+
+  ```java
+  public class MasterElection implements Runnable {
+  	
+      @Override
+      public void run() {
+              try {
+                  
+                  if (!peers.isReady()) {
+                      return;
+                  }
+                  //是否超过一个选届时间
+                  RaftPeer local = peers.local();
+                  local.leaderDueMs -= GlobalExecutor.TICK_PERIOD_MS;
+                  
+                  if (local.leaderDueMs > 0) {
+                      return;
+                  }
+                  
+                  //重置超时时间
+                  local.resetLeaderDue();
+                  local.resetHeartbeatDue();
+                  //发送选届
+                  sendVote();
+              } catch (Exception e) {
+                  Loggers.RAFT.warn("[RAFT] error while master election {}", e);
+              }
+              
+          }
+      
+      private void sendVote() {
+              
+              RaftPeer local = peers.get(NetUtils.localServer());
+              
+              peers.reset();
+              
+          	//当前节点，选届+1，为自己投一票，节点状态为CANDIDATE(候选者)
+              local.term.incrementAndGet();
+              local.voteFor = local.ip;
+              local.state = RaftPeer.State.CANDIDATE;
+              
+          	//给其他节点发送选举信息
+              Map<String, String> params = new HashMap<>(1);
+              params.put("vote", JacksonUtils.toJson(local));
+              for (final String server : peers.allServersWithoutMySelf()) {
+                  final String url = buildUrl(server, API_VOTE);
+                  try {
+                      HttpClient.asyncHttpPost(
+                          url, null, params, new AsyncCompletionHandler<Integer>() {
+                          @Override
+                          public Integer onCompleted(Response response){
+                            if (response.getStatusCode() != HttpURLConnection.HTTP_OK) {
+                                  return 1;
+                              }
+                              
+                              RaftPeer peer 
+                                  = JacksonUtils.toObj(response.getResponseBody()
+                                                       , RaftPeer.class);
+                              
+                              //判断选举结果
+                              peers.decideLeader(peer);
+                              
+                              return 0;
+                          }
+                      });
+                  } catch (Exception e) {
+                      Loggers.RAFT.warn();
+                  }
+              }
+          }
+      
+      //选举leader，超过半数
+      public RaftPeer decideLeader(RaftPeer candidate) {
+          peers.put(candidate.ip, candidate);
+          
+          SortedBag ips = new TreeBag();
+          //最大选票数
+          int maxApproveCount = 0;
+          //最大选票节点
+          String maxApprovePeer = null;
+          for (RaftPeer peer : peers.values()) {
+              //还没有投票的节点
+              if (StringUtils.isEmpty(peer.voteFor)) {
+                  continue;
+              }
+              //添加被选举的节点
+              ips.add(peer.voteFor);
+              //判断被选举节点的数量是否大于最大数
+              if (ips.getCount(peer.voteFor) > maxApproveCount) {
+                  maxApproveCount = ips.getCount(peer.voteFor);
+                  maxApprovePeer = peer.voteFor;
+              }
+          }
+          
+          //最大选举数要大于半数
+          if (maxApproveCount >= majorityCount()) {
+              //选举成功，节点状态修改为leader
+              RaftPeer peer = peers.get(maxApprovePeer);
+              peer.state = RaftPeer.State.LEADER;
+              
+              if (!Objects.equals(leader, peer)) {
+                  leader = peer;
+                  //发送一个leader选举结束事件
+                  ApplicationUtils.publishEvent(
+                      new LeaderElectFinishedEvent(this, leader, local()));
+              }
+          }
+          
+          return leader;
+      }
+  }
+  ```
+
+  选举过程
+
+  ```java
+  public class RaftController {
+  	
+      @PostMapping("/vote")
+      public JsonNode vote(HttpServletRequest request, HttpServletResponse response) throws Exception {
+          
+          //收到投票请求
+          RaftPeer peer = raftCore
+              .receivedVote(JacksonUtils.toObj(WebUtils.required(request, "vote")
+                                               , RaftPeer.class));
+          
+          return JacksonUtils.transferToJsonNode(peer);
+      }
+      
+  }
+  
+  public class RaftCore {
+      
+      public synchronized RaftPeer receivedVote(RaftPeer remote) {
+          
+          if (!peers.contains(remote)) {
+              //不包含当前选举的候选者节点
+              throw new IllegalStateException("can not find peer: " + remote.ip);
+          }
+          
+          RaftPeer local = peers.get(NetUtils.localServer());
+          
+          if (remote.term.get() <= local.term.get()) {
+        		//当前的选届大于等于候选者的选届
+              if (StringUtils.isEmpty(local.voteFor)) {
+                  //没有选举，选举自己（否则为默认选举）
+                  local.voteFor = local.ip;
+              }
+              return local;
+          }
+          //选届比较大
+          
+          //重置选举时间
+          local.resetLeaderDue();
+          
+          //当前节点成为FOLLOWER，并为候选者投票，选届也更新为候选者的term
+          local.state = RaftPeer.State.FOLLOWER;
+          local.voteFor = remote.ip;
+          local.term.set(remote.term.get());
+         
+          
+          return local;
+      }
       
   }
   ```
 
-- 1
+- **日志的复制：**
+
+  1. 
+
+- 
 
 ### **服务注册与发现**（naming模块）
 
@@ -1826,7 +2086,176 @@ RaftPeer：每一个节点
   }
   ```
 
-- 
+- **客户端心跳:**
+
+  ```java
+  public class BeatReactor implements Closeable {
+  
+      class BeatTask implements Runnable {
+          
+          @Override
+          public void run() {
+              if (beatInfo.isStopped()) {
+                  return;
+              }
+              long nextTime = beatInfo.getPeriod();
+              try {
+                  //发送心跳请求
+                  JsonNode result 
+                      = serverProxy
+                      .sendBeat(beatInfo, BeatReactor.this.lightBeatEnabled);
+                 //返回的响应的结果
+                 int code = result.get(CommonParams.CODE).asInt();
+                 
+                  if (code == NamingResponseCode.RESOURCE_NOT_FOUND) {
+                      //资源未发现，注册服务
+                       serverProxy.registerService(beatInfo.getServiceName(),
+                                  NamingUtils.getGroupName(beatInfo.getServiceName())
+                                                   , instance);
+                  }
+              }
+          }
+          
+      }
+      
+  }
+  
+  @CanDistro
+  @PutMapping("/beat")
+  @Secured(parser = NamingResourceParser.class, action = ActionTypes.WRITE)
+  public ObjectNode beat(HttpServletRequest request) throws Exception {
+      
+      //根据namespace和serviceName获取service,当前ip的元信息
+      Instance instance 
+          = serviceManager.getInstance(namespaceId, serviceName, clusterName, ip, port);
+      if (instance == null) {
+           //如果没有注册一个
+           serviceManager.registerInstance(namespaceId, serviceName, instance);
+      }
+      Service service = serviceManager.getService(namespaceId, serviceName);
+      //处理心跳
+      service.processClientBeat(clientBeat);
+  }
+  
+  public void processClientBeat(final RsInfo rsInfo) {
+      ClientBeatProcessor clientBeatProcessor = new ClientBeatProcessor();
+      clientBeatProcessor.setService(this);
+      clientBeatProcessor.setRsInfo(rsInfo);
+      //立即执行
+      HealthCheckReactor.scheduleNow(clientBeatProcessor);
+  }
+  
+  public class ClientBeatProcessor implements Runnable {
+      @Override
+      public void run() {
+          Service service = this.service;
+   
+          String ip = rsInfo.getIp();
+          String clusterName = rsInfo.getCluster();
+          int port = rsInfo.getPort();
+          Cluster cluster = service.getClusterMap().get(clusterName);
+          List<Instance> instances = cluster.allIPs(true);
+          
+          for (Instance instance : instances) {
+              if (instance.getIp().equals(ip) && instance.getPort() == port) {
+                 	 //更新上次心跳时间
+                  instance.setLastBeat(System.currentTimeMillis());
+                  if (!instance.isMarked()) {
+                      if (!instance.isHealthy()) {
+                          instance.setHealthy(true);
+                          getPushService().serviceChanged(service);
+                      }
+                  }
+              }
+          }
+      }
+  }
+  ```
+
+- **实例信息拉取**
+
+  1. 如果有订阅（没有列表的时候会立即去获取，已有列表会wait 5s，然后由一个延迟1s的线程池去获取）
+  2. 没有订阅，直接请求获取
+
+  ```java
+  public class NacosNamingService implements NamingService {
+      
+      @Override
+      public List<Instance> getAllInstances(String serviceName,
+                                            String groupName, List<String> clusters,
+              boolean subscribe) throws NacosException {
+          
+          ServiceInfo serviceInfo;
+          //是否订阅
+          if (subscribe) {
+              // 从缓存或注册中心获取服务信息
+              serviceInfo 
+                  = hostReactor.getServiceInfo(
+                  NamingUtils.getGroupedName(serviceName, groupName),
+                      StringUtils.join(clusters, ","));
+          } else {
+              //直接从注册中心获取
+              serviceInfo 
+                  = hostReactor
+                      .getServiceInfoDirectlyFromServer(
+                  NamingUtils.getGroupedName(serviceName, groupName),
+                              StringUtils.join(clusters, ","));
+          }
+          List<Instance> list;
+          if (serviceInfo == null 
+              || CollectionUtils.isEmpty(list = serviceInfo.getHosts())) {
+              return new ArrayList<Instance>();
+          }
+          return list;
+      }
+      
+  }
+  ```
+
+- **推送服务:**
+
+  ```java
+  public class PushReceiver implements Runnable, Closeable {
+  
+      @Override
+      public void run() {
+          while (!closed) {
+              try {
+                  
+                	//开启UDP
+                  byte[] buffer = new byte[UDP_MSS];
+                  DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                  //接受udp消息
+                  udpSocket.receive(packet);
+                  //解压数据并序列化
+                  String json 
+                      = new String(IoUtils
+                                   .tryDecompress(packet.getData()), UTF_8).trim();
+          
+                  
+                  PushPacket pushPacket = JacksonUtils.toObj(json, PushPacket.class);
+                  String ack;
+                  if ("dom".equals(pushPacket.type) 
+                      || "service".equals(pushPacket.type)) {
+                      //处理数据同步到其他节点（保存service信息）
+                      hostReactor.processServiceJson(pushPacket.data);
+                  } else if ("dump".equals(pushPacket.type)) {
+                      // dump数据
+                  } else {
+                      //仅仅ack响应
+                  }
+                  //udp发送消息ack
+                  udpSocket.send(new DatagramPacket(ack.getBytes(UTF_8),
+                                                    ack.getBytes(UTF_8).length,
+                          						  packet.getSocketAddress()));
+              } catch (Exception e) {
+                  NAMING_LOGGER.error("[NA] error while receiving push data", e);
+              }
+          }
+      }
+      
+  }
+  ```
 
 ## 2.鉴权中心
 
