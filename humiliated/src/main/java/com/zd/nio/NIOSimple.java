@@ -2,6 +2,7 @@ package com.zd.nio;
 
 
 import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -14,27 +15,28 @@ public class NIOSimple {
 
         ReentrantLock lock = new ReentrantLock();
 
-        Condition condition = lock.newCondition();
+        Object obj = new Object();
 
-        new Thread(() -> {
-            if (lock.tryLock()) {
-                try {
-                    condition.await();
-                    System.out.println(11);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-        }).start();
+        Thread t1 = new Thread(() -> {
+            Thread.yield();
+            LockSupport.park();
+            System.out.println(22);
+        });
 
-        new Thread(() -> {
-            if (lock.tryLock()) {
-                condition.signalAll();
-                System.out.println(22);
-                lock.unlock();
-            }
-        }).start();
 
+
+        Thread t2 = new Thread(() -> {
+            System.out.println(11);
+        });
+
+        LockSupport.park();
+        LockSupport.parkNanos(111);
+        t1.wait();
+        t1.wait(111);
+
+        t1.start();
+        t2.start();
+        LockSupport.unpark(t1);
 
     }
 }
