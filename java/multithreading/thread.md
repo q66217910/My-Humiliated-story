@@ -94,12 +94,14 @@
 
 - **Monitor：**
 
+  ​    可重入 , 非公平锁
+  
   1. 访问对象同步代码
   2. 进入EntryList（锁池）
   3. 当线程获取到Monitor对象后，将Monitor中的_owner设置成当前线程，_count++
-  4. 执行完毕，或者调用了wait方法。释放持有的Monitor，owner设置成NULL，count--
+4. 执行完毕，或者调用了wait方法。释放持有的Monitor，owner设置成NULL，count--
   5. 若是调用了wait方法，当前线程会进入WaitSet。（等待唤醒Monitor对象存储在对象的对象头中）
-
+  
   ```c
     ObjectMonitor() {
       _header       = NULL;
@@ -134,16 +136,104 @@
 #### 锁升级
 
 - **无锁:**  锁消除的情况
-- **偏向锁：**  **当一个线程获取到锁时**，进入偏向锁模式。Mark Word的ThreadID为当前线程。之后该线程再访问同步块时不需要CAS操作来加锁和解锁。当一个线程获取到锁后会在对象头里替换偏向锁的线程id。
+- **偏向锁：**  **当一个线程获取到锁时**，进入偏向锁模式。Mark Word的ThreadID为当前线程。之后该线程再访问同步块时不需要CAS操作来加锁和解锁(CAS修改对象头中存储当前线程的ID)。当一个线程获取到锁后会在对象头里替换偏向锁的线程id。
 - **轻量级锁:**  **当发生锁竞争时**，进入轻量锁模式。
   1. 线程进入同步代码时，若对象头锁状态为 01（无锁状态），当前栈帧建立一个Lock Record（锁记录），用于存储对象目前的 Mark Word 的拷贝。
   2. 将对象头的Mark Word拷贝到栈帧的Lock Record
   3. 使用CAS操作尝试将对象的Mark Word 更新为指向 Lock Record 的指针，并将 Lock Record 里的 owner 指针指向对象的 Mark Word
   4. 若设置成功，目前线程就获取到了锁，将对象的 Mark Word 设置为00（轻量级锁）
-  5. 若设置失败，检查对象的 Mark Word 的是否指向当前线程的栈帧（若是，说明当前线程已经获取到了锁）。否则说明多个线程在竞争锁，轻量级锁膨胀为重量级锁，锁标志的状态变为"10"，Mark Word 中存储的就变为指向重量级锁的指针，当前线程便尝试使用自旋来获取锁，而后面等待锁的线程要进入阻塞状态。
+  5. 若设置失败，（自旋获取锁，自适应自旋锁）。自旋很少获取到该锁，锁冲突严重，会直接阻塞线程，轻量级锁膨胀为重量级锁，锁标志的状态变为"10"，Mark Word 中存储的就变为指向重量级锁的指针，当前线程便尝试使用自旋来获取锁，而后面等待锁的线程要进入阻塞状态。
   6. 解锁，通过 CAS 操作尝试把线程栈帧中复制的Displaced Mark Word 替换到对象当前的 Mark Word
   7. 替换失败，说明由其他线程尝试获取该锁(此时锁已经膨胀为重量级锁)，在释放锁的同时，唤醒被挂起的线程。
-- 
+-  **重量级锁:** 当锁竞争严重，**轻量级锁自旋很少能获取到锁**，进入重量级锁模式。
+  1. 若monitor的_count为0，则该线程获取到锁，_count++，当前线程为monitor的拥有者。
+  2. 若还是当前线程进入count++（以此实现可重入）
+  3. 若monitor占用失败，线程进入阻塞状态，直到monitor的count为0，再重新尝试获取锁。
 
 
+
+
+
+## 4. 线程池
+
+#### 线程池参数
+
+-  **corePoolSize：** 核心线程数（空闲状态保持的最大线程数）
+
+-  **maximumPoolSize:**  最大线程数 （线程池允许最大线程数）
+
+-  **keepAliveTime/unit:**  当线程数大于corePoolSize时，多余线程空闲多久被回收。
+
+-  **workQueue:**  工作队列（线程数达到corePoolSize时，任务会加入队列）
+
+  ```
+  LinkedBlockingQueue: 无边界
+  ArrayBlockingQueue: 有边界
+  ```
+
+-  **threadFactory：**  线程工厂 （用于生产work线程）
+
+  ```
+  默认的线程会设置成非守护线程，分配默认的优先级（5）。
+  线程的优先级:
+  	public final static int MIN_PRIORITY = 1; //最低优先级
+  	public final static int NORM_PRIORITY = 5; //默认优先级
+  	public final static int MAX_PRIORITY = 10; //最大优先级 
+  work线程设置为非守护线程：
+  	若为守护线程,主线程会退出,持有线程池的线程退出后,失去GC ROOT,线程池可能会被回收
+  ```
+
+-  **handler：**  拒绝策略 （当队列满了，线程数量达到maximumPoolSize，还有任务进来时执行）
+
+  ```
+  AbortPolicy: 全部抛RejectedExecutionException异常
+  CallerRunsPolicy: 若线程池没有shutdown,直接开启线程运行
+  DiscardOldestPolicy: 重新加回队列
+  DiscardPolicy: 直接丢弃
+  ```
+
+
+
+#### 线程池执行
+
+1. workcount<corePoolSize,直接启动一个新线程执行。
+2. 若workcount>=corePoolSize，则把任务加入队列。
+3. 若添加队列失败(队列满了)，则判断workcount<maximumPoolSize,启动一个新线程执行。
+4. 若workcount>=maximumPoolSize,执行拒绝策略。
+
+```java
+//ctl, 前三位代表线程池状态
+//111：RUNNING (运行状态)
+//000：SHUTDOWN (不接受任务,但是处理任务)
+//001：STOP (不接收任务，不处理任务,中断进行中的任务)
+//010：TIDYING (所有的任务都中止,workcount为0)
+//100：TERMINATED (已关闭线程池)
+private final AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
+
+//执行某个线程任务
+public void execute(Runnable command) {
+    	//任务不能为空
+        if (command == null)
+            throw new NullPointerException();
+        int c = ctl.get();
+        if (workerCountOf(c) < corePoolSize) {
+            //workcount<corePoolSize,直接启动一个新线程执行
+            if (addWorker(command, true))
+                return;
+            c = ctl.get();
+        }
+    	//若workcount>=corePoolSize，则把任务加入队列
+        if (isRunning(c) && workQueue.offer(command)) {
+            int recheck = ctl.get();
+            if (! isRunning(recheck) && remove(command))
+                reject(command);
+            else if (workerCountOf(recheck) == 0)
+                addWorker(null, false);
+        }
+    	//若添加队列失败(队列满了)，则判断workcount<maximumPoolSize,启动一个新线程执行。
+        else if (!addWorker(command, false))
+            //若workcount>=maximumPoolSize,执行拒绝策略。
+            reject(command);
+    }
+```
 
