@@ -101,7 +101,7 @@
   3. 当线程获取到Monitor对象后，将Monitor中的_owner设置成当前线程，_count++
 4. 执行完毕，或者调用了wait方法。释放持有的Monitor，owner设置成NULL，count--
   5. 若是调用了wait方法，当前线程会进入WaitSet。（等待唤醒Monitor对象存储在对象的对象头中）
-  
+
   ```c
     ObjectMonitor() {
       _header       = NULL;
@@ -242,7 +242,7 @@ public void execute(Runnable command) {
 ## 5.volatile
 
 - **可见性:** 线程对volatile修饰的变量修改，会立即被其他线程感知
-- **禁止指令重排**
+- **禁止指令重排:**  在jvm编译器和cpu中，有时候会为了优化效率会对正常的操作指令进行重新排序，volatile变量会禁止指令重排序。 
 
 
 
@@ -269,5 +269,260 @@ public void execute(Runnable command) {
 
    CPU和编译器为了提升程序执行的效率，允许进行指令优化，语句中没有数据依赖关系，便可以重排。
 
-2. 
+2. **什么是happens-before：**
+
+    程序顺序规则:  一个线程中的每个操作 happens-before 该线程中任意的后续操作 
+
+    监视器锁规则:  对一个线程的解锁 happens-before 于随后该线程或者其它线程对这个对象的加锁 
+
+    volatile 变量规则 :  对一个 volatile 域的写 happens-before 于任意后续对这个 volatile 域的读 
+
+    传递性规则：  如果 A happens-before B, B happens-before C 那么 A happens-before C 
+
+3.  **如何阻止指令重排(内存屏障):**
+
+   1.  在每个volatile写操作的**前面**插入一个**StoreStore屏障**(禁止上面的普通写和下面的volatile写重排序)
+   2.  在每个volatile写操作的**后面**插入一个**StoreLoad屏障**(防止上面的volatile写与下面可能有的volatile读/写重排序 )
+   3.  在每个volatile读操作的**后面**插入一个**LoadLoad屏障**( 禁止下面所有的普通读操作和上面的volatile读重排序 )
+   4.  在每个volatile读操作的**后面**插入一个**LoadStore屏障**( 禁止下面所有的普通写操作和上面的volatile读重排序 )
+
+   **执行顺序:**  StoreStore->volatile写->StoreLoad->volatile读->LoadLoad->LoadStore
+
+
+
+## 6.AQS（AbstractQueuedSynchronizer）
+
+#### Node节点
+
+  用于存放 Sync Queue 、 Condition Queue 
+
+```java
+/**
+           +------+  prev +-----+       +-----+
+      head |      | <---- |     | <---- |     |  tail
+           +------+       +-----+       +-----+
+**/
+static final class Node {
+
+    static final Node SHARED = new Node();//共享节点
+    static final Node EXCLUSIVE = null; //独占节点
+    
+    static final int CANCELLED =  1;//线程被取消
+    static final int SIGNAL    = -1;//当前线程已经准备好，正等待其实线程释放锁
+    static final int CONDITION = -2;//正在等待条件(条件队列)
+    static final int PROPAGATE = -3;//表示下一个acquireShared应无条件传播
+    
+    
+    volatile int waitStatus;//节点状态(CANCELLED/SIGNAL/CONDITION/PROPAGATE)
+    
+    
+    volatile Node prev;//前置节点
+    volatile Node next;//后置节点
+    
+    
+    volatile Thread thread;//被包装成节点的线程
+    Node nextWaiter;//下一个等待节点，可以用来判断共享锁或者独占锁
+    
+    private volatile int state;//同步状态(若是独占锁只有0/1，共享锁为n，n为资源数)
+    
+}
+
+//添加节点(默认快速往队尾加入，添加失败循环添加直至成功)
+private Node addWaiter(Node mode) {
+        Node node = new Node(Thread.currentThread(), mode);
+        Node pred = tail;
+        if (pred != null) {
+            node.prev = pred;
+            if (compareAndSetTail(pred, node)) {
+                pred.next = node;
+                return node;
+            }
+        }
+    	//循环添加直至成功
+        enq(node);
+        return node;
+}
+
+private Node enq(final Node node) {
+        for (;;) {
+            Node t = tail;
+            if (t == null) { // Must initialize
+                if (compareAndSetHead(new Node()))
+                    tail = head;
+            } else {
+                node.prev = t;
+                if (compareAndSetTail(t, node)) {
+                    t.next = node;
+                    return t;
+                }
+            }
+        }
+}
+```
+
+#### 独占锁、共享锁
+
+- **独占锁:**  tryAcquire、tryRelease
+- **共享锁:**  tryAcquireShared、tryReleaseShared
+
+#### Sync Queue(同步队列)
+
+1. 尝试获取锁
+2. 获取锁失败，把当前线程包装成同步队列节点加入队列。
+3. 获取当前节点的前置节点，若前置节点是头节点，尝试去获取锁。
+4. 若成功获取到锁，将当前节点设置成头节点。(成功获取锁，返回)
+5. 若前置节点不是头节点(没有排到当前节点)或者获取锁失败(可能是非公平锁，被先获取了)
+6. 过滤前面被取消的节点，并把前置节点状态设置为SIGNAL，并挂起当前线程。
+7. 等待正在执行的线程释放锁，并唤醒下一个未被取消的节点。
+
+```java
+//获取锁
+public final void acquire(int arg) {
+        if (!tryAcquire(arg) &&
+            acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
+            selfInterrupt();
+}
+
+final boolean acquireQueued(final Node node, int arg) {
+        boolean failed = true;
+        try {
+            boolean interrupted = false;
+            for (;;) {
+                final Node p = node.predecessor();
+                if (p == head && tryAcquire(arg)) {
+                    setHead(node);
+                    p.next = null;
+                    failed = false;
+                    return interrupted;
+                }
+                //过滤前面被取消的节点，并把前置节点状态设置为SIGNAL，并挂起线程。
+                if (shouldParkAfterFailedAcquire(p, node) &&
+                    parkAndCheckInterrupt())
+                    interrupted = true;
+            }
+        } finally {
+            //获取锁失败，取消节点
+            if (failed)
+                cancelAcquire(node);
+        }
+}
+
+private static boolean shouldParkAfterFailedAcquire(Node pred, Node node) {
+    	//前一个节点状态
+        int ws = pred.waitStatus;
+        if (ws == Node.SIGNAL)
+            //SIGNAL状态说明只需要等待锁
+            return true;
+        if (ws > 0) {
+           	//waitStatus大于0,节点被取消
+            do {
+                //删除被取消的节点
+                node.prev = pred = pred.prev;
+            } while (pred.waitStatus > 0);
+            pred.next = node;
+        } else {
+           	//前置节点waitStatus设置为-1,代表已经准备好了
+            compareAndSetWaitStatus(pred, ws, Node.SIGNAL);
+        }
+        return false;
+}
+
+//释放资源
+public final boolean release(int arg) {
+    	//尝试释放锁
+        if (tryRelease(arg)) {
+            Node h = head;
+            if (h != null && h.waitStatus != 0)
+                unparkSuccessor(h);
+            return true;
+        }
+        return false;
+}
+
+private void unparkSuccessor(Node node) {
+        int ws = node.waitStatus;
+        if (ws < 0)
+            compareAndSetWaitStatus(node, ws, 0);
+		
+    	//获取头结点的下一个节点
+        Node s = node.next;
+        if (s == null || s.waitStatus > 0) {
+            s = null;
+            //找到第一个没有被取消的节点
+            for (Node t = tail; t != null && t != node; t = t.prev)
+                if (t.waitStatus <= 0)
+                    s = t;
+        }
+        if (s != null)
+            //唤醒该节点
+            LockSupport.unpark(s.thread);
+}
+```
+
+
+
+#### Condition Queue （条件队列）
+
+```java
+ public class ConditionObject implements Condition, java.io.Serializable {
+ 	
+     private transient Node firstWaiter;//第一个节点
+     private transient Node lastWaiter;//最后一个节点
+     
+     private static final int REINTERRUPT =  1;//reinterrupt等待退出
+     private static final int THROW_IE    = -1;//抛出InterruptedException等待退出
+     
+ }
+```
+
+
+
+```java
+final ConditionObject newCondition() {
+     return new ConditionObject();
+}
+
+public final void await() throws InterruptedException {
+    if (Thread.interrupted())
+        throw new InterruptedException();
+    //往队尾添加新节点
+    Node node = addConditionWaiter();
+    //尝试释放所有资源
+    int savedState = fullyRelease(node);
+    int interruptMode = 0;
+    //判断队列是否是条件队列
+    while (!isOnSyncQueue(node)) {
+        //是条件队列挂起当前线程
+        LockSupport.park(this);
+        //检查线程是否被中断(如果中断，取消等待队列节点)
+        if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
+            break;
+    }
+    if (acquireQueued(node, savedState) && interruptMode != THROW_IE)
+        interruptMode = REINTERRUPT;
+    if (node.nextWaiter != null) // clean up if cancelled
+        unlinkCancelledWaiters();
+    if (interruptMode != 0)
+        reportInterruptAfterWait(interruptMode);            
+}
+
+//往队尾添加新节点
+private Node addConditionWaiter() {
+    Node t = lastWaiter;
+    //尾节点已经不存在
+    if (t != null && t.waitStatus != Node.CONDITION) {
+        //去除非条件节点
+        unlinkCancelledWaiters();
+        t = lastWaiter;
+    }
+    //将当前节点包装成条件节点
+    Node node = new Node(Thread.currentThread(), Node.CONDITION);
+    if (t == null)
+        firstWaiter = node;
+    else
+        t.nextWaiter = node;
+    lastWaiter = node;
+    return node;
+}
+```
 
