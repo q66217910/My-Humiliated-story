@@ -297,6 +297,18 @@ public void execute(Runnable command) {
   用于存放 Sync Queue 、 Condition Queue 
 
 ```java
+public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchronizer
+    implements java.io.Serializable {
+   
+    private volatile int state;//同步状态(若是独占锁只有0/1，共享锁为n，n为资源数)
+    
+    private transient volatile Node head;//同步队列的头节点
+    private transient volatile Node tail;//同步队列的尾节点
+    
+    static final long spinForTimeoutThreshold = 1000L;//自旋纳秒数
+    
+}
+
 /**
            +------+  prev +-----+       +-----+
       head |      | <---- |     | <---- |     |  tail
@@ -323,7 +335,6 @@ static final class Node {
     volatile Thread thread;//被包装成节点的线程
     Node nextWaiter;//下一个等待节点，可以用来判断共享锁或者独占锁
     
-    private volatile int state;//同步状态(若是独占锁只有0/1，共享锁为n，n为资源数)
     
 }
 
@@ -461,7 +472,7 @@ private void unparkSuccessor(Node node) {
 
 
 
-#### Condition Queue （条件队列）
+#### Condition Queue （等待队列）
 
 ```java
  public class ConditionObject implements Condition, java.io.Serializable {
@@ -475,7 +486,29 @@ private void unparkSuccessor(Node node) {
  }
 ```
 
+##### await:
 
+**await():**   await期间响应中断，如果阻塞太久可以随时中断唤醒
+
+**await(long time, TimeUnit unit):**  可以设置等待超时时间，并可以响应中断
+
+**awaitUninterruptibly:**  await期间不响应中断，非得等到条件满足被唤醒
+
+
+
+1. 将当前线程封装成Node节点并加入等待队列(Condition queue)的尾部
+
+2. 释放所有锁和资源
+
+3. 死循环直到节点转移到同步队列(Sync Queue),循环中会挂起线程,等待唤醒。
+
+   await: 线程被中断会转移到同步队列
+
+   awaitUninterruptibly: 只能signal转移到同步队列
+
+   await(long time, TimeUnit unit): 超时会同步到同步队列
+
+4. 处理同步队列
 
 ```java
 final ConditionObject newCondition() {
@@ -490,7 +523,7 @@ public final void await() throws InterruptedException {
     //尝试释放所有资源
     int savedState = fullyRelease(node);
     int interruptMode = 0;
-    //判断队列是否是条件队列
+    //判断条件队列节点是否转移到同步队列
     while (!isOnSyncQueue(node)) {
         //是条件队列挂起当前线程
         LockSupport.park(this);
@@ -498,10 +531,13 @@ public final void await() throws InterruptedException {
         if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
             break;
     }
+    //处理同步队列
     if (acquireQueued(node, savedState) && interruptMode != THROW_IE)
         interruptMode = REINTERRUPT;
-    if (node.nextWaiter != null) // clean up if cancelled
+    if (node.nextWaiter != null)
+        //去除非条件节点
         unlinkCancelledWaiters();
+    //抛出异常
     if (interruptMode != 0)
         reportInterruptAfterWait(interruptMode);            
 }
@@ -523,6 +559,77 @@ private Node addConditionWaiter() {
         t.nextWaiter = node;
     lastWaiter = node;
     return node;
+}
+```
+
+##### signal
+
+**signal:**  移动等待时间最长的线程，进入同步节点
+
+**signalAll: **   移动所有的线程，进入同步节点
+
+```java
+private void doSignal(Node first) {
+    		//将first转移到同步队列
+            do {
+                if ( (firstWaiter = first.nextWaiter) == null)
+                    lastWaiter = null;
+                first.nextWaiter = null;
+            // 如果转移不成功且还有后续节点，那么继续后续节点的转移    
+            } while (!transferForSignal(first) &&
+                     (first = firstWaiter) != null);
+}
+
+final boolean transferForSignal(Node node) {
+       
+    	//讲节点状态从条件状态-> 默认状态
+        if (!compareAndSetWaitStatus(node, Node.CONDITION, 0))
+            return false;
+
+        //往同步队列队尾加入当前节点
+        Node p = enq(node);
+        int ws = p.waitStatus;
+    	//节点已经被取消或者节点状态设置成SIGNAL失败，会唤起节点
+        if (ws > 0 || !compareAndSetWaitStatus(p, ws, Node.SIGNAL))
+            LockSupport.unpark(node.thread);
+        return true;
+}
+```
+
+
+
+#### 共享锁
+
+```java
+private void doAcquireShared(int arg) {
+    //将当前线程包装成节点，mode为SHARED
+    final Node node = addWaiter(Node.SHARED);
+    boolean failed = true;
+    try {
+        boolean interrupted = false;
+        for (;;) {
+            final Node p = node.predecessor();
+            if (p == head) {
+                //尝试获取锁,r为剩余资源
+                int r = tryAcquireShared(arg);
+                if (r >= 0) {
+                    //重设头节点，并唤醒后续节点
+                    setHeadAndPropagate(node, r);
+                    p.next = null; 
+                    if (interrupted)
+                        selfInterrupt();
+                    failed = false;
+                    return;
+                }
+            }
+            if (shouldParkAfterFailedAcquire(p, node) &&
+                parkAndCheckInterrupt())
+                interrupted = true;
+        }
+    } finally {
+        if (failed)
+            cancelAcquire(node);
+    }
 }
 ```
 

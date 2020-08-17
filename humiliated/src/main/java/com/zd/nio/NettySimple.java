@@ -12,7 +12,7 @@ public class NettySimple {
     public static void main(String[] args) throws InterruptedException {
         ReentrantLock lock = new ReentrantLock();
         Condition condition = lock.newCondition();
-        condition.await();
+        condition.awaitUninterruptibly();
     }
 
 }
