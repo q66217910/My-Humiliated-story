@@ -63,6 +63,11 @@ MYSQL
 			
 		select * from information_schema.innodb_locks; #查看锁的概况
 		
+	
+	为什么mysql的隔离级别默认是RR?
+		因为mysql binlog在STATMENT在主从同步时，会出现主从不一致，只有RR级别引入间接锁，
+		或者binlog改为row格式。
+		
 		
 ```
 
@@ -356,6 +361,42 @@ public enum Isolation {
 
 
 
+#### 隔离级别RR与RC对比
+
+- RR存在间隙锁，死锁的概率比RC大
+
+- RR级别下，条件列未命中会锁表，RC级别下只会锁行。
+
+- 在RC级别下，有**半一致性读**的特性增加了updatec操作的并发。
+
+  （半一致性读：在update语句读到记录已经加锁时，会重新发起一次读操作，读取最新版本的记录并加锁。）
+
+
+
+#### MYSQL的XA事务
+
+1. **prepare阶段：**  写入redo log，并将回滚段置为prepared状态，此时binlog不做操作。
+2. **commit阶段：** innodb释放锁，释放回滚段，设置提交状态，写入binlog，然后存储引擎层提交。
+
+
+
+#### mysql数据库崩溃恢复
+
+1. 扫描最后一个binlog文件，提取其中的xid；
+2. InnoDB维持了状态为Prepare的事务链表，将这些事务的xid和binlog中记录的xid做比较，如果在binlog中存在，则提交，否则回滚事务。
+
+
+
+#### 事务隔离级别的实现
+
+- **可重复读(RR):**
+  1. 利用间隙锁，防止幻读的出现，保证了可重复读
+  2. MVCC的快照生成时机不同(只会在第一次读的时候生成)
+- **读提交(RC):**
+- 
+
+
+
 ### 4. MYSQL索引
 
 ```
@@ -558,8 +599,10 @@ public class BTree<K extends Comparable<K>, V> {
                 oldKey = null;
             }
             //将数据复制到新节点,原来的叶子节点只留左半边
-            System.arraycopy(temp, this.keyNum / 2, tempNode.entries, 0, tempNode.keyNum);
-            for (int j = this.keyNum / 2; j < this.entries.length; j++) this.entries[j] = null;
+            System.arraycopy(temp, this.keyNum / 2, 
+                             tempNode.entries, 0, tempNode.keyNum);
+            for (int j = this.keyNum / 2; j < this.entries.length; j++) 
+                this.entries[j] = null;
             return this.parent.insertNode(this, tempNode, oldKey);
         }
     }
@@ -614,9 +657,11 @@ public class BTree<K extends Comparable<K>, V> {
                 Node<K, V> node = this;
                 while (node.parent != null) {
                     if (node.entries[node.keyNum - 1].key
-                            .compareTo(node.parent.entries[node.parent.keyNum - 1].key) > 0) {
+                            .compareTo(node.parent.entries[node.parent.keyNum - 1].key)
+                        > 0) {
                         //若当前最大节点比父节点最大节点值大
-                        node.parent.entries[node.parent.keyNum - 1].key = node.entries[node.keyNum - 1].key;
+                        node.parent.entries[node.parent.keyNum - 1].key 
+                            = node.entries[node.keyNum - 1].key;
                     }
                     node = node.parent;
                 }
@@ -649,6 +694,36 @@ public class BTree<K extends Comparable<K>, V> {
 }
 
 ```
+
+
+
+#### 索引建立规则
+
+1. 索引并非越多越好，索引的建立会占用磁盘空间，并且影响insert,delete,update等语句的性能。
+2. 避免更新频繁的表建立更多的索引。
+3. 数据量少的表尽量不要使用索引，因为全表查询可能会比走索引有回表要快。
+4. 不同值很少的列没必要建立索引例如(性别)，因为对查询效率提升不大
+5. 在频繁进行排序或者分组的列上建立索引
+
+
+
+#### 回表查询和索引覆盖
+
+**索引覆盖：**   在非聚簇索引叶子节点存储的是索引的列，如果查询的列都在索引中，就不需要回表操作变可以返回
+
+**回表查询：**  因为非聚簇索引非叶子节点存的是主键，所以当需要查询非聚簇索引中没有的数据的时候，只能根据主键到聚簇索引中查询。
+
+
+
+#### 唯一索引和普通索引
+
+**唯一索引查询比普通索引快，插入比普通索引慢。**当非聚簇索引插入时，先判断索引页是否在内存中，如果在直接插入。若不在则先放入Change Buffer 中，再以一定频率和情况进行Insert Buffer和原数据页合并(merge)操作。Change Buffer的优势是，可以将多个插入操作合并成一个，提高了非聚簇索引的插入性能。**而唯一索引插入慢的原因是因为无法利用Change Buffer。**因为唯一索引要保证唯一性，必须将数据页加载到内存才能判断。**唯一索引查询快的原因，普通索引要查询到下一个条不满足的才中止，而唯一索引只需要查询到满足的就中止。**
+
+
+
+#### 联合索引
+
+1. 最左匹配原则：范围查找就会停止匹配
 
 
 
@@ -718,4 +793,23 @@ public class BTree<K extends Comparable<K>, V> {
 7. **执行成功消费消息。**
 
 
+
+## 7.mysql常见问题
+
+#### Mysql主键：
+
+在不设置主键的情况，innodb会生成一个隐藏列作为自增主键。**自己指定主键的好处是，查询时可以可以显式使用，提升查询效率**。主键推荐使用自增主键，因为在innodb中主键时聚簇索引，插入记录时会按照顺序插入，**非自增的主键插入时可能会在中间插入，导致页分裂，产生表碎片**。
+
+
+
+#### timestamp和datetime区别：
+
+- timestamp： 四个字节的整数，时间范围为1970-01-01 08:00:01到2038-01-19 11:14:07。**`timestamp`类型是带有时区信息的。**
+- datetime：datetime储存占用8个字节，它存储的时间范围为1000-01-01 00:00:00 ~ 9999-12-31 23:59:59。**datetime存储的时间区间大，但是不带时区信息。**
+
+
+
+#### 为什么不推荐存储大量的内容：
+
+因为会导致biglog内容较多，会影响主从同步的效率。
 

@@ -139,4 +139,61 @@ public class Dichotomy {
         }
         return l;
     }
+
+    /**
+     *  构建大顶堆
+     */
+    private static void buildMaxHeap(int[] array, int length) {
+        //从最后一个非叶子节点开始
+        for (int i = length / 2 - 1; i >= 0; i--) {
+            adjustHeap(array, i, length);
+        }
+    }
+
+    private static void adjustHeap(int[] array, int i, int length) {
+        //获取当前非叶子节点的值
+        int temp = array[i];
+        //依次遍历非叶子节点的左子节点
+        for (int j = 2 * i + 1; j < length; j = 2 * j + 1) {
+            //让j指向左右子节点较大的哪个
+            if (j + 1 < length && array[j] < array[j + 1]) {
+                j++;
+            }
+            //如果子节点>父节点
+            if (array[j] > temp) {
+                //让当前非叶子节点的值等于子节点的值
+                array[i] = array[j];
+                //让当前非叶子节点的下标指向当前字节点的下标
+                i = j;
+            } else {
+                //因为大顶堆是从下到上构建的，所以如果父节点是最大的那个的话就可以直接退出循环
+                break;
+            }
+            //让大的子节点等于之前非叶子节点的值
+            array[j] = temp;
+        }
+    }
+
+    /**
+     *  堆排序
+     */
+    public static int[] heapSort(int[] array, int n) {
+        int size = n;
+        //第一次构建大顶堆
+        int length = array.length;
+        buildMaxHeap(array, length);
+        //此时顶端是数组中最大的节点，将顶端与数组末尾交换，然后在剩下的数组中再次构建大顶堆
+        while (n > 0 && n <= length) {
+            // 交换首尾元素
+            int temp = array[0];
+            array[0] = array[length - 1];
+            array[length - 1] = temp;
+            n--;
+            length--;
+            buildMaxHeap(array, length);
+        }
+        int[] result = new int[size];
+        System.arraycopy(array, array.length - size, result, 0, size);
+        return result;
+    }
 }

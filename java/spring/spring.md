@@ -250,3 +250,63 @@ public abstract class AbstractAutowireCapableBeanFactory extends AbstractBeanFac
 }
 ```
 
+
+
+## 2.Spring IOC
+
+#### 2-1. Bean的配置
+
+- **xml配置:** XmlBeanDefinitionReader
+
+- **Properties配置** PropertiesBeanDefinitionReader
+
+  
+
+#### 2-2.BeanDefinition
+
+BeanDefinition抽象了用户对Bean的定义
+
+```java
+public interface BeanDefinition extends AttributeAccessor, BeanMetadataElement {
+	
+}
+```
+
+
+
+#### 2-3.BeanDefinitionRegistry
+
+BeanDefinitionRegistry注册器基于id和name保存BeanDefinition(bean定义的信息)，Alias为别名。
+
+```java
+public interface BeanDefinitionRegistry extends AliasRegistry {
+    
+    void registerBeanDefinition(String beanName, BeanDefinition beanDefinition)
+    
+    void registerAlias(String name, String alias);
+}
+```
+
+
+
+#### 2-4. BeanDefinitionReader
+
+**加载bean的过程：**
+
+1. 创建一个注册器(BeanDefinitionRegistry)
+2. 创建bean定义读取器(BeanDefinitionReader)
+
+```java
+//创建一个简单注册器
+BeanDefinitionRegistry register = new SimpleBeanDefinitionRegistry();
+//创建bean定义读取器
+BeanDefinitionReader reader = new XmlBeanDefinitionReader(register);
+// 创建资源读取器
+DefaultResourceLoader resourceLoader = new DefaultResourceLoader();
+// 获取资源
+Resource xmlResource = resourceLoader.getResource("spring.xml");
+// 装载Bean的定义
+reader.loadBeanDefinitions(xmlResource);
+
+```
+
