@@ -641,13 +641,65 @@ private void doAcquireShared(int arg) {
 
 -  **parallelism：** 并行级别，（0-2^16-1）
 -  **factory:**  工作线程线程工厂
--  **handler：** 拒绝策略
+-  **handler：** 异常处理
 -  **asyncMode：** 是否异步调度
 
-**线程池的执行:**
+**分而治之/工作窃取:**
+
+​	ForkJoinPool采取的是一个分而治之+工作窃取的模式，当执行一个新的任务时，会将任务拆分成更小的任务，并将小任务加入线程队列WorkQueue中，当其他线程任务先执行完，会窃取其他的队列的任务来执行。WorkQueue是一个双端队列（push()/pop()仅在其所有者工作线程中调用，poll()是由其它线程窃取任务时调用的；），当只剩下一个任务时，通过CAS进行竞争。
+
+**WorkQueue：**
+
+```java
+static final class WorkQueue {
+    
+    ForkJoinTask<?>[] array;//工作任务数组
+    volatile int base; //下一个要出队列的索引（出队索引）
+    int top; //下一个要推送进来的索引（入队索引）
+    
+}
+```
+
+**ForkJoinTask：**
+
+```java
+public abstract class ForkJoinTask<V> implements Future<V>, Serializable {
+	
+    volatile int status; //任务状态
+    static final int DONE_MASK   = 0xf0000000;  // 用于屏蔽未完成的bit位 (1111000...)
+    static final int NORMAL      = 0xf0000000;  // 正常运行
+    static final int CANCELLED   = 0xc0000000;  // 取消状态 (1100000..)
+    static final int EXCEPTIONAL = 0x80000000;  // 异常状态(1000000..)
+    static final int SIGNAL      = 0x00010000;  // 大于1 << 16
+    static final int SMASK       = 0x0000ffff;  //(1111111111111111)
+    
+    //当前工作线程加入队列，若不是work线程，加入线程池筛选的队列
+    public final ForkJoinTask<V> fork() {
+        Thread t;
+        if ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread)
+            ((ForkJoinWorkerThread)t).workQueue.push(this);
+        else
+            ForkJoinPool.common.externalPush(this);
+        return this;
+    }
+    
+    //当处理结束返回结果集
+    public final V join() {
+        int s;
+        if ((s = doJoin() & DONE_MASK) != NORMAL)
+            reportException(s);
+        return getRawResult();
+    }
+}
+```
+
+**线程池快速入队的执行:**
 
 1. 若不是ForkJoinTask，包装成RunnableExecuteAction。
-2. 
+2. 根据probe值判断落在哪个workqueue中，并对该workqueue加锁。
+3. 任务总数 > (队列下一个进队索引-队列下一个出队索引)
+4. 若大于，则表示可以存入队列，计算存储的索引，进行存储并且(top++)，释放锁。若出队索引小于等于1，尝试开启(激活)一个新的工作线程。
+5. 若不满足3，则说明队列满了。会释放锁，然后执行(完整版入队操作externalSubmit)
 
 ```java
 public class ForkJoinPool extends AbstractExecutorService {
@@ -655,10 +707,10 @@ public class ForkJoinPool extends AbstractExecutorService {
     //runState
     private static final int  RSLOCK     = 1;
     private static final int  RSIGNAL    = 1 << 1;
-    private static final int  STARTED    = 1 << 2;
-    private static final int  STOP       = 1 << 29;
-    private static final int  TERMINATED = 1 << 30;
-    private static final int  SHUTDOWN   = 1 << 31;
+    private static final int  STARTED    = 1 << 2; //起始状态
+    private static final int  STOP       = 1 << 29; //停止状态(拒绝接受任务，不处理任务)
+    private static final int  TERMINATED = 1 << 30; //拒绝接受任务，处理任务
+    private static final int  SHUTDOWN   = 1 << 31; //线程池已经停止
     
 	public void execute(Runnable task) {
         if (task == null)
@@ -674,7 +726,6 @@ public class ForkJoinPool extends AbstractExecutorService {
     final void externalPush(ForkJoinTask<?> task) {
         //ws:工作队列数组
         WorkQueue[] ws; WorkQueue q; int m;
-        //
         int r = ThreadLocalRandom.getProbe();
         //运行状态
         int rs = runState;
@@ -683,20 +734,46 @@ public class ForkJoinPool extends AbstractExecutorService {
             (q = ws[m & r & SQMASK]) != null && r != 0 && rs > 0 &&
             U.compareAndSwapInt(q, QLOCK, 0, 1)) {
             ForkJoinTask<?>[] a; int am, n, s;
+            //任务总数(am) > (队列下一个进队索引(s)-队列下一个出队索引)(n)
             if ((a = q.array) != null &&
                 (am = a.length - 1) > (n = (s = q.top) - q.base)) {
+                //得出当前任务存储的索引
                 int j = ((am & s) << ASHIFT) + ABASE;
+                //存储
                 U.putOrderedObject(a, j, task);
                 U.putOrderedInt(q, QTOP, s + 1);
                 U.putIntVolatile(q, QLOCK, 0);
+                //若是出队索引小于1
                 if (n <= 1)
                     signalWork(ws, q);
                 return;
             }
             U.compareAndSwapInt(q, QLOCK, 1, 0);
         }
+        //完整版入队操作
         externalSubmit(task);
     }
 }
+```
+
+**工作线程运行：**
+
+```java
+final void runWorker(WorkQueue w) {
+    	//resize队列（原队列扩展一倍）
+        w.growArray();   
+    	//初始化窃取指数(随机)
+        int seed = w.hint;               
+        int r = (seed == 0) ? 1 : seed;  
+        for (ForkJoinTask<?> t;;) {
+            //扫描，并试图窃取任务
+            if ((t = scan(w, r)) != null)
+                //运行任务
+                w.runTask(t);
+            else if (!awaitWork(w, r))
+                break;
+            r ^= r << 13; r ^= r >>> 17; r ^= r << 5;
+        }
+    }
 ```
 
