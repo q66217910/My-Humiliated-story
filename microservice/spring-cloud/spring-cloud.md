@@ -3579,8 +3579,79 @@ public class LoadBalancerCommand<T> {
 
 ####    负载Rule
 
--  **RetryRule：**
--  **RoundRobinRule：**基本的负载均衡策略，即循环赛规则
+- **RetryRule：**
+
+- **RoundRobinRule：**基本的负载均衡策略，即循环赛规则
+
 -  **WeightedResponseTimeRule：**加权轮循
 
    
+
+
+
+## 4. 链路追踪
+
+### 1.Zipkin+Sleuth
+
+#### Span
+
+```java
+public final class Span implements Serializable {
+	 final String traceId; //每一个链路的唯一标识 (追踪request-> response的全过程)
+     final String parentId; //本次调用的发起者
+     final String id; //当前spanId，每一个span都有一个唯一id标识请求到某一个服务组件。
+     final Kind kind; //跨度类型(CLIENT()/SERVER/PRODUCER/CONSUMER)
+     final long timestamp, duration;//span的开始时间和结束时间
+     final Endpoint localEndpoint, remoteEndpoint;//记录当前span的服务，和目标服务
+}
+```
+
+#### HttpTrace 收集（支持rest，thrift，protobuf）
+
+1. 客户端通过接口上传Trace信息
+2. 解码spans
+3.  Collector(对span进行验证、存储并设置索引），添加本地监控spans数量，并且为了防止高峰出现问题，对没超过边界的traceId记录日志处理。
+4. 日志记录处理
+
+```java
+public class ZipkinHttpCollector {
+	
+  @Post("/api/v2/spans")
+  public HttpResponse uploadSpans(byte[] serializedSpans) {
+    //解码并存储spans
+    return validateAndStoreSpans(SpanBytesDecoder.JSON_V2, serializedSpans);
+  }
+    
+}
+
+public class Collector {
+    
+    public void accept(List<Span> spans, Callback<Void> callback) {
+    if (spans.isEmpty()) {
+      callback.onSuccess(null);
+      return;
+    }
+    metrics.incrementSpans(spans.size());
+
+    List<Span> sampled = sample(spans);
+    if (sampled.isEmpty()) {
+      callback.onSuccess(null);
+      return;
+    }
+
+    try {
+      //记录日志
+      record(sampled, acceptSpansCallback(sampled));
+      callback.onSuccess(null);
+    } catch (RuntimeException e) {
+      callback.onError(errorStoringSpans(sampled, e));
+      return;
+    }
+  }
+    
+  void record(List<Span> sampled, Callback<Void> callback) {
+    storage.spanConsumer().accept(sampled).enqueue(callback);
+  }
+}
+```
+
