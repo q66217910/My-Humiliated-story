@@ -3600,11 +3600,197 @@ public final class Span implements Serializable {
 	 final String traceId; //每一个链路的唯一标识 (追踪request-> response的全过程)
      final String parentId; //本次调用的发起者
      final String id; //当前spanId，每一个span都有一个唯一id标识请求到某一个服务组件。
+     String name; //span名称,一般是方法名
      final Kind kind; //跨度类型(CLIENT()/SERVER/PRODUCER/CONSUMER)
      final long timestamp, duration;//span的开始时间和结束时间
      final Endpoint localEndpoint, remoteEndpoint;//记录当前span的服务，和目标服务
+     ArrayList<Annotation> annotations; //事件与时间戳
+     TreeMap<String, String> tags; //span的上下文信息，比如：http.method、http.path
 }
 ```
+
+#### Annotation（v1）:
+
+​	用于记录事件与时间戳
+
+- **cs：** Client Send，表示客户端发起请求.
+- **sr:**    Server Receive，表示服务端收到请求。
+- **ss:**   Server Send，表示服务端完成处理，并将结果发送给客户端。
+- **cr:**   Client Received，表示客户端获取到服务端返回信息。
+
+#### **Kind** （V2）：
+
+- **CLIENT：** cs
+- **SERVER：** sr
+- **PRODUCER：** ss
+- **CONSUMER：** cr
+
+#### Sleuth追踪原理
+
+1.  **Scheduled定时任务:**
+
+   拦截@Scheduled注解的定时任务
+
+   ```java
+   @Aspect
+   public class TraceSchedulingAspect {
+   
+       @Around("execution (@org.springframework.scheduling.annotation.Scheduled 
+               * *.*(..))")
+   	public Object traceBackgroundThread(final ProceedingJoinPoint pjp) 
+           throws Throwable {
+           
+       }
+       
+   }
+   ```
+
+2.  **Feign调用：**
+
+   实现了Feign.Client，Feign是通过Client接口的execute去调用其他的服务。相当于调用前记录。
+
+   ```java
+   public class TraceLoadBalancerFeignClient extends LoadBalancerFeignClient {
+   
+       @Override
+   	public Response execute(Request request, Request.Options options) 
+           throws IOException {
+           
+           Response response = null;
+   		Span fallbackSpan = tracer().nextSpan().start();
+           try {
+   			response = super.execute(request, options);
+   			return response;
+   		}finally {
+   			fallbackSpan.abandon();
+   		}
+       }
+       
+   }
+   ```
+
+   
+
+3.  **Hystrix/Rxjava：**
+
+   通过**HystrixPlugins**自定义SleuthHystrixConcurrencyStrategy ,在执行回调时，生成span，再执行其他回调。
+
+   ```java
+   public class SleuthHystrixConcurrencyStrategy extends HystrixConcurrencyStrategy {
+   	
+       @Override
+   	public <T> Callable<T> wrapCallable(Callable<T> callable) {
+           
+           if (passthrough) {
+   			return this.tracing.currentTraceContext().wrap(callable);
+   		}
+   		else {
+   			return new TraceCallable<>(this.tracing, this.spanNamer, wrappedCallable,
+   					HYSTRIX_COMPONENT);
+   		}
+       }
+       
+       public class TraceCallable<V> implements Callable<V> {
+           
+           @Override
+           public V call() throws Exception {
+               ScopedSpan span = this.tracer.startScopedSpanWithParent(this.spanName,
+                       this.parent);
+               try {
+                   return this.delegate.call();
+               }
+               catch (Exception | Error ex) {
+                   span.error(ex);
+                   throw ex;
+               }
+               finally {
+                   span.finish();
+               }
+           }
+           
+       }
+   }
+   ```
+
+4.  **Async(异步)/线程池:**
+
+   拦截@Async
+
+   ```java
+   @Aspect
+   public class TraceAsyncAspect {
+       
+   	@Around("execution (@org.springframework.scheduling.annotation.Async  * *.*(..))")
+   	public Object traceBackgroundThread(final ProceedingJoinPoint pjp) 
+           throws Throwable {
+           
+           String spanName = name(pjp);
+   		Span span = this.tracer.currentSpan();
+   		if (span == null) {
+   			span = this.tracer.nextSpan();
+   		}
+   		span = span.name(spanName);
+   		try (Tracer.SpanInScope ws = this.tracer.withSpanInScope(span.start())) {
+   			span.tag(CLASS_KEY, pjp.getTarget().getClass().getSimpleName());
+   			span.tag(METHOD_KEY, pjp.getSignature().getName());
+   			return pjp.proceed();
+   		}
+   		finally {
+   			span.finish();
+   		}
+           
+       }
+   }
+   ```
+
+   通过包装线程池，若非同一个上下文，会创建
+
+   ```java
+   public class TraceableExecutorService implements ExecutorService {
+   
+   	public TraceableExecutorService(BeanFactory beanFactory,
+   			final ExecutorService delegate, String spanName) {
+   		this.delegate = delegate;
+   		this.beanFactory = beanFactory;
+   		this.spanName = spanName;
+   	}
+   	
+   	@Override
+   	public void execute(Runnable command) {
+   		this.delegate.execute(ContextUtil.isContextInCreation(this.beanFactory) 
+   		? command
+   				: new TraceRunnable(tracing(), spanNamer(), command, this.spanName));
+   	}
+   }
+   ```
+
+5. **web:**
+
+   拦截器TraceWebFilter，请求拦截。也提供@RestController/@Controller/@Callable注解的AOP拦截
+
+   ```java
+   public final class TraceWebFilter implements WebFilter, Ordered {
+   
+   	@Override
+   	public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
+   		if (tracer().currentSpan() != null) {
+   			tracer().withSpanInScope(null);
+   		}
+   		String uri = exchange.getRequest().getPath().pathWithinApplication().value();
+   		return new MonoWebFilterTrace(chain.filter(exchange), exchange, this);
+   	}
+   
+   }
+   ```
+
+6. **rpc/gpc/zuul**
+
+### Zipkin的实现
+
+- **collector：** 信息收集器，是一个**守护进程**，对客户端传输的span，进行**验证**、**存储**以及**创建查询索引**。
+- **storage:**  存储组件,默认InMemoryStorage(本地内存)，此外支持使用Cassandra、ElasticSearch 和 Mysql。
+- **search:** 查询进程,提供简单的JSON API来供外部调用查询。
+- **web UI ：** zipkin的服务端展示平台，调用search提供的接口，用图表将链路信息展示出来。
 
 #### HttpTrace 收集（支持rest，thrift，protobuf）
 
@@ -3655,3 +3841,76 @@ public class Collector {
 }
 ```
 
+#### Brave
+
+#### Tracing（链路追踪组件）:
+
+```java
+public class Tracer {
+	String localServiceName = "unknown"; //当前服务名称
+    String localIp; //当前服务ip地址
+    int localPort; // 服务端口
+    Reporter<zipkin2.Span> spanReporter;//reporter，用于处理链路信息
+    Clock clock; //用于计时
+    Sampler sampler = Sampler.ALWAYS_SAMPLE;//采样器，用于定义采样规则，默认全样采集
+    //用于获取当前 TraceContext ，默认使用了 InheritableThreadLocal，支持复制到异步线程
+    CurrentTraceContext currentTraceContext = CurrentTraceContext.Default.inheritable();
+    //顾名思义，traceId是否128bit，是否支持Join一个跨度
+    boolean traceId128Bit = false, supportsJoin = true, alwaysReportSpans = false;
+    boolean trackOrphans = false;
+    //传播工厂，用于定义传播规则，如何注入与提取等
+    Propagation.Factory propagationFactory = B3Propagation.FACTORY;
+    //错误处理器
+    ErrorParser errorParser = new ErrorParser();
+    //span结束回调器
+    Set<FinishedSpanHandler> finishedSpanHandlers = new LinkedHashSet<>();
+}
+```
+
+#### span的创建:
+
+```java
+public class Tracer {
+
+  //创建一个新的链路
+  public Span newTrace() {
+    return _toSpan(newRootContext(0));
+  }
+   
+  //返回一个子跨度
+  public Span nextSpan() {
+    //获取当前链路内容,若不存在创建一个新的链路，若存在创建子跨度。
+    TraceContext parent = currentTraceContext.get();
+    return parent != null ? newChild(parent) : newTrace();
+  }  
+    
+  Span _toSpan(TraceContext decorated) {
+    if (isNoop(decorated)) return new NoopSpan(decorated);
+    // 获取或者创建一个挂起的跨度
+    //这里多了一个新建的对象叫 PendingSpan ，用于收集一条trace上暂时被挂起的未完成的span
+    PendingSpan pendingSpan = pendingSpans.getOrCreate(decorated, false);
+    //新建一个跨度(RealSpan是Span的一个实现)
+    return new RealSpan(decorated, pendingSpans, 
+                        pendingSpan.state(), pendingSpan.clock(),
+        finishedSpanHandler);
+  }
+    
+  //同一个链路的跨度span合并
+  public final Span joinSpan(TraceContext context) {
+    if (context == null) throw new NullPointerException("context == null");
+    long parentId = context.parentIdAsLong(), spanId = context.spanId();
+    if (!supportsJoin) {
+      parentId = context.spanId();
+      spanId = 0L;
+    }
+    return _toSpan(decorateContext(context, parentId, spanId));
+  }
+}
+```
+
+### 2.SkyWalking 
+
+- **探针:**   通过字节码增强无侵入式的收集，并通过 HTTP 或者 gRPC 方式发送数据到平台后端。
+- **平台后端：** 用于数据聚合、数据分析以及驱动数据流从探针到用户界面的流程。
+- **存储：**  ElasticSearch、H2 或 MySQL 集群（Sharding-Sphere 管理）
+- **用户界面：** SkyWalking的可视化界面
