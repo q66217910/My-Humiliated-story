@@ -310,3 +310,144 @@ reader.loadBeanDefinitions(xmlResource);
 
 ```
 
+
+
+### 3. Springboot的启动过程
+
+1. **构建SpringApplication:**
+
+   SpringApplication.run(Main.class, args);
+
+   ```java
+   public class SpringApplication {
+       
+       public static ConfigurableApplicationContext run(
+           Class<?>[] primarySources, String[] args) {
+   		return new SpringApplication(primarySources).run(args);
+   	}
+       
+       public SpringApplication(
+           ResourceLoader resourceLoader, Class<?>... primarySources) {
+           //资源加载
+   		this.resourceLoader = resourceLoader;
+           //启动类
+   		this.primarySources = new LinkedHashSet<>(Arrays.asList(primarySources));
+           //判断web服务类型(DispatcherServlet类不同)
+   		this.webApplicationType = WebApplicationType.deduceFromClasspath();
+           //初始化
+   		setInitializers((Collection) getSpringFactoriesInstances(
+               ApplicationContextInitializer.class));
+           //监听初始化
+   		setListeners((Collection) getSpringFactoriesInstances(
+               ApplicationListener.class));
+           //当前main方法的类型
+   		this.mainApplicationClass = deduceMainApplicationClass();
+   	}
+   }
+   
+   public enum WebApplicationType {
+       NONE,//不以Web应用程序运行
+       SERVLET,//基于servlet的Web应用程序
+       REACTIVE;//REACTIVE的web应用程序
+   }
+   ```
+
+2. **初始化ApplicationContextInitializer/ApplicationListener：**
+
+   ```java
+   public class SpringApplication {
+   
+       private <T> Collection<T> getSpringFactoriesInstances(
+           Class<T> type, Class<?>[] parameterTypes, Object... args) {
+           //获取classload
+   		ClassLoader classLoader = getClassLoader();
+   		//classload加载ApplicationContextInitializer
+   		Set<String> names = new LinkedHashSet<>(SpringFactoriesLoader
+                                                   .loadFactoryNames(type, classLoader));
+   		List<T> instances = createSpringFactoriesInstances
+               (type, parameterTypes, classLoader, args, names);
+   		AnnotationAwareOrderComparator.sort(instances);
+   		return instances;
+   	}
+       
+   }
+   ```
+
+3. **运行SpringApplication:**
+
+   1. **StopWatch：** 记录启动时间(startTimeNanos/totalTimeNanos)
+
+   2. **SpringApplicationRunListener**： SpringApplication初始化时的监听
+
+      -  **starting:**  初始化开始前
+      -  **environmentPrepared:** 环境初始化前
+      -  **contextPrepared:** ApplicationContext初始化前
+      -  **contextLoaded:**  ApplicationContext初始化后
+      -  **started:**  SpringApplication开始启动
+      -  **running:**  SpringApplication开始运行
+      -  **failed:** SpringApplication启动失败
+
+   3. **初始化环境:**
+
+       **activeProfiles:**  配置文件列表
+
+       **defaultProfiles:** 默认配置文件(default)
+
+   4. 
+
+   ```java
+   public class SpringApplication {
+   	
+       public ConfigurableApplicationContext run(String... args) {
+   		StopWatch stopWatch = new StopWatch();
+   		stopWatch.start();
+   		ConfigurableApplicationContext context = null;
+   		Collection<SpringBootExceptionReporter> exceptionReporters 
+               = new ArrayList<>();
+           //java.awt.headless:  缺少显示设备、键盘或鼠标模式
+   		configureHeadlessProperty();
+           //初始化运行时间监听
+   		SpringApplicationRunListeners listeners = getRunListeners(args);
+   		listeners.starting();
+   		try {
+   			ApplicationArguments applicationArguments 
+                   = new DefaultApplicationArguments(args);
+               //初始化环境
+   			ConfigurableEnvironment environment 
+                   = prepareEnvironment(listeners, applicationArguments);
+               
+   			configureIgnoreBeanInfo(environment);
+               //打印banner图
+   			Banner printedBanner = printBanner(environment);
+   			context = createApplicationContext();
+   			exceptionReporters = getSpringFactoriesInstances(SpringBootExceptionReporter.class,
+   					new Class[] { ConfigurableApplicationContext.class }, context);
+   			prepareContext(context, environment, listeners, applicationArguments, printedBanner);
+   			refreshContext(context);
+   			afterRefresh(context, applicationArguments);
+   			stopWatch.stop();
+   			if (this.logStartupInfo) {
+   				new StartupInfoLogger(this.mainApplicationClass).logStarted(getApplicationLog(), stopWatch);
+   			}
+   			listeners.started(context);
+   			callRunners(context, applicationArguments);
+   		}
+   		catch (Throwable ex) {
+   			handleRunFailure(context, ex, exceptionReporters, listeners);
+   			throw new IllegalStateException(ex);
+   		}
+   
+   		try {
+   			listeners.running(context);
+   		}
+   		catch (Throwable ex) {
+   			handleRunFailure(context, ex, exceptionReporters, null);
+   			throw new IllegalStateException(ex);
+   		}
+   		return context;
+   	}
+       
+   }
+   ```
+
+   

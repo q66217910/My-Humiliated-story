@@ -8,6 +8,8 @@ public class NettySimple {
 
     public static void main(String[] args) throws InterruptedException {
 
+        
+
         ForkJoinPool pool = ForkJoinPool.commonPool();
 
         RecursiveAction recursiveAction = new RecursiveAction() {
