@@ -2553,7 +2553,12 @@ ResourceServerTokenServices:
   }
   ```
 
-  获取授权码，并重定向到指定uri
+  获取授权码，并重定向到指定uri:
+
+  1. 根据clientId获取ClientDetails的信息
+  2. 重定向地址解析，并在请求头中设置重定向地址
+  3. 检查当前用户clientid是否认证授权。
+  4. 验证完成自动授权，若是code(授权码模式)跳转到重定向页面，若是token(隐性模式)回调url中的地址。
 
   ```java
   public class AuthorizationEndpoint extends AbstractEndpoint {
