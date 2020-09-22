@@ -20,12 +20,8 @@ public class NettySimple {
     private static Semaphore semaphoreB=new Semaphore(0);
     private static Semaphore semaphoreC=new Semaphore(0);
 
-
     //先打印a，然后按顺序释放l，l执行完成释放i，每个执行完后锁住自身
     public static void main(String[] args) throws InterruptedException {
-
-        
-        
 
         Thread thread1 = new Thread(() -> {
             for (int i = 0; i < n; i++) {

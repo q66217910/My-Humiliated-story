@@ -314,6 +314,8 @@ reader.loadBeanDefinitions(xmlResource);
 
 ### 3. Springboot的启动过程
 
+-  **Environment** :  Environment 在容器中是一个抽象的集合， profiles (环境dev、uat、pro)和 properties
+
 1. **构建SpringApplication:**
 
    SpringApplication.run(Main.class, args);
@@ -357,14 +359,19 @@ reader.loadBeanDefinitions(xmlResource);
    ```java
    public class SpringApplication {
    
+       //从spring.factories文件中读取配置的实现
+       public static final String FACTORIES_RESOURCE_LOCATION 
+               = "META-INF/spring.factories";
+       
        private <T> Collection<T> getSpringFactoriesInstances(
            Class<T> type, Class<?>[] parameterTypes, Object... args) {
            //获取classload
    		ClassLoader classLoader = getClassLoader();
-   		//classload加载ApplicationContextInitializer
+           //classload加载ApplicationContextInitializer
    		Set<String> names = new LinkedHashSet<>(SpringFactoriesLoader
                                                    .loadFactoryNames(type, classLoader));
-   		List<T> instances = createSpringFactoriesInstances
+   		//获取默认构造器初始化实现了这个class的类
+           List<T> instances = createSpringFactoriesInstances
                (type, parameterTypes, classLoader, args, names);
    		AnnotationAwareOrderComparator.sort(instances);
    		return instances;
@@ -393,8 +400,15 @@ reader.loadBeanDefinitions(xmlResource);
 
        **defaultProfiles:** 默认配置文件(default)
 
-   4. 
+   4. **创建ApplicationContext**:
 
+       -  **SERVLET**: servlet web server (BIO同步阻塞)
+       -  **REACTIVE**： reactive web server (NIO 同步非阻塞)
+       
+   5. **初始化ApplicationContext对象 :** 核心方法为applicationContext.refresh();
+   
+       spring ioc和aop功能
+   
    ```java
    public class SpringApplication {
    	
@@ -419,15 +433,22 @@ reader.loadBeanDefinitions(xmlResource);
    			configureIgnoreBeanInfo(environment);
                //打印banner图
    			Banner printedBanner = printBanner(environment);
+               //创建ApplicationContext
    			context = createApplicationContext();
-   			exceptionReporters = getSpringFactoriesInstances(SpringBootExceptionReporter.class,
+               //实例化异常捕获对象
+   			exceptionReporters = getSpringFactoriesInstances
+                   (SpringBootExceptionReporter.class,
    					new Class[] { ConfigurableApplicationContext.class }, context);
-   			prepareContext(context, environment, listeners, applicationArguments, printedBanner);
+   			//初始化ApplicationContext
+               prepareContext(context, environment, 
+                              listeners, applicationArguments, printedBanner);
+               //初始化核心处理
    			refreshContext(context);
    			afterRefresh(context, applicationArguments);
    			stopWatch.stop();
    			if (this.logStartupInfo) {
-   				new StartupInfoLogger(this.mainApplicationClass).logStarted(getApplicationLog(), stopWatch);
+   				new StartupInfoLogger(this.mainApplicationClass)
+                       .logStarted(getApplicationLog(), stopWatch);
    			}
    			listeners.started(context);
    			callRunners(context, applicationArguments);
@@ -435,7 +456,7 @@ reader.loadBeanDefinitions(xmlResource);
    		catch (Throwable ex) {
    			handleRunFailure(context, ex, exceptionReporters, listeners);
    			throw new IllegalStateException(ex);
-   		}
+			}
    
    		try {
    			listeners.running(context);
@@ -445,9 +466,92 @@ reader.loadBeanDefinitions(xmlResource);
    			throw new IllegalStateException(ex);
    		}
    		return context;
+   }
+       
+   }
+   ```
+   
+4. **初始化ApplicationContext对象 :**
+
+   1. **prepareRefresh:**   
+
+   ```java
+   public abstract class AbstractApplicationContext extends DefaultResourceLoader
+   	implements ConfigurableApplicationContext {
+   	
+       ` private long startupDate;
+       private final AtomicBoolean active = new AtomicBoolean();
+       private final AtomicBoolean closed = new AtomicBoolean();
+       
+       @Override
+   	public void refresh() throws BeansException, IllegalStateException {
+   		synchronized (this.startupShutdownMonitor) {
+   			//设置启动日期和活动标志,初始化属性源(property source)配置
+   			prepareRefresh();
+   
+   			//销毁之前的beanFactory，生成一个新的beanFactory
+   			ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+   
+   			//配置 beanFactory 上下文
+               //1.添加 ApplicationContextAwareProcessor 和 ApplicationListenerDetector
+       		//2.忽略部分类型的自动装配
+       		//3.注册特殊的依赖类型，并使用相应的autowired值
+       		//4.注册默认的environment beans
+       		//5.设置environment beans
+   			prepareBeanFactory(beanFactory);
+   
+   			try {
+   				//留给子类去扩展的一个方法，对beanFactory进行处理
+   				postProcessBeanFactory(beanFactory);
+   
+   				//设置执行自定义的ProcessBeanFactory 和spring内部自己定义的
+   				invokeBeanFactoryPostProcessors(beanFactory);
+   
+   				//注册实例化BeanPostProcessor
+   				registerBeanPostProcessors(beanFactory);
+   
+   				//初始化的MessageSource.
+   				initMessageSource();
+   
+   				//初始化应用事件广播器
+   				initApplicationEventMulticaster();
+   
+   				//初始化bean实例
+   				onRefresh();
+   
+   				//注册监听
+   				registerListeners();
+   
+   				// 实例化所有剩余的（非延迟初始化）单例。
+   				finishBeanFactoryInitialization(beanFactory);
+   
+   				//最后一步：发布相应的事件。
+   				finishRefresh();
+   			}
+   
+   			catch (BeansException ex) {
+   				//销毁所有的bean
+   				destroyBeans();
+   				//重置活跃标记
+   				cancelRefresh(ex);
+   				throw ex;
+   			}
+   
+   			finally {
+                   //在Spring的核心中重置常见的自省缓存，因为我们可能不再需要单例bean的元数据...
+   				resetCommonCaches();
+   			}
+   		}
    	}
        
    }
    ```
 
    
+
+## 4.SpringAOP
+
+#### 动态代理：
+
+- **JDK Proxy：** 只能代理实现代理的类 ( InvocationHandler. invoke())
+-  **cglib：**   针对类来实现代理 ， 对指定的目标类生成一个子类，并覆盖其中方法实现增强，但因为采用的是继承，所以不能对 final 修饰的类进行代理。( MethodInterceptor. intercept()) 

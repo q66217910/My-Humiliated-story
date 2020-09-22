@@ -3256,7 +3256,7 @@ feign调用时会指定使用HystrixInvocationHandler，会构造一个HystrixCo
 ```java
 public abstract class HystrixCommand<R> extends AbstractCommand<R> implements HystrixExecutable<R>, HystrixInvokableInfo<R>, HystrixObservable<R> {
 	
-     public Future<R> queue() {
+     public Future<R>  () {
          //阻塞获取结果
          final Future<R> delegate = toObservable().toBlocking().toFuture();
          
