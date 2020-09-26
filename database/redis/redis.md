@@ -4667,8 +4667,29 @@ pipeline：可以将多次IO缩减成1次
 
 
 
-## 12.通信协议（protocol）
+## 12.REDIS集群与哨兵
 
-## 13.Redis-Module
+## 13.Redis集群数据倾斜
+
+#### 数据倾斜的原因：
+
+1.  **hot key的出现（数据请求倾斜）：** 某部分的热点key访问量高于其他key，而分片又都集中分布在某一个实例上。
+   -  键空间(keyspace)设计不合理 
+   -  集群规划不当，数据槽(slot)数分配不均匀 
+2.  **big key的出现（数据容量倾斜）：** 使得存储big key的实例内存不足。
+   -  系统存在大的集合key(hash,set,list等) 
+   -  执行monitor这类命令，导致当前节点client输出缓冲区增大 
+
+#### 数据倾斜的解决方案：
+
+1. 本地化缓存 
+2. 利用分片的算法，打散hot key
+3. 对big key进行一个拆分
+4.  系统设计角度应避免使用keys hash tag； 
+5.  避免直接使用keys,monitor等命令，导致输出缓冲区堆积；这类命令建议作rename处理； 
+
+## 14.通信协议（protocol）
+
+## 15.Redis-Module
 
 RedisSearch(redis 全文搜索)、 BloomFilter、Redis-ML（机器学习）

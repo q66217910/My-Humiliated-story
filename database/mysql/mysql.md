@@ -144,10 +144,6 @@ public enum Isolation {
 
 
 
-##### 1-7.TransactionAspectSupport（Spring 事务AOP）
-
-
-
 ### 2. MYSQL的日志
 
 ```
@@ -288,7 +284,7 @@ public enum Isolation {
 		行锁是通过给索引项加锁来实现。所以只有使用索引时,才会使不然使用表锁。
 	
     行锁优化:
-    	1.尽量使用索引，避免升级为表锁
+    	1.尽量使用索引，避免升级为表 锁
     	2.合理设计索引，尽可能缩小锁的范围
     	3.减少范围查询的范围，避免间隙锁的影响。
     
@@ -791,8 +787,6 @@ public class BTree<K extends Comparable<K>, V> {
 
 
 
-#### 
-
 ## 消息事务
 
 1. **发送半消息：** （**半消息指 消息对消费者不可见**）
@@ -823,4 +817,112 @@ public class BTree<K extends Comparable<K>, V> {
 #### 为什么不推荐存储大量的内容：
 
 因为会导致biglog内容较多，会影响主从同步的效率。
+
+
+
+#### Explain:
+
+- **id:**   选择标识符, SELECT的查询序列号, **SQL从id大到小执行**，id大的为子查询，id相同时按顺序执行
+- **select_type：** select子句的类型。
+  -  *SIMPLE* ：简单sql，不包含union和子查询
+  -  *PRIMARY* ：子查询中的最外层
+  -  *UNION* ：uion查询中，在union后的子语句
+  -  *DEPENDENT UNION* ：
+  -  *UNION RESULT* ：union的结果集
+  -  SUBQUERY :  子查询
+  -  *DERIVED*  ： 派生表
+- **table:**  数据库表名
+- **partitions:**  分区
+- **type:** 表示表的连接类型 
+  -  *ALL* ：扫描全表
+  - *index* ：遍历索引树
+  -  *range* ：使用索引来选择行
+  - *ref* ： 表的连接匹配条件 
+  -  *eq_ref* ：主键外连接
+  -  *const* ： 查询某部分进行优化，并转换为一个常量时 
+  -  NULL ： 优化过程中分解语句，执行时甚至不用访问表或索引 
+-  **possible_keys：**  表示查询时，可能使用的索引 
+-  **key:** 表示实际使用的索引  
+-  **key_len:** 索引字段的长度 
+-  **ref:** 列与索引的比较 
+-  **rows:** 扫描出的行数(估算的行数) 
+-  **filtered:** 按表条件过滤的行百分比 
+-  **Extra:** 执行情况的描述和说明 
+
+  
+
+## 8. @Transactional
+
+### 8.1 核心类 PlatformTransactionManager 
+
+-  **TransactionDefinition ：** 事务的定义，包括隔离级别、传播级别、超时时间、是否只读
+-  **TransactionStatus：**事务状态，包含内部保存点。
+-  **getTransaction():** 获取当前事务或者返回新的事务
+-  **commit(TransactionStatus status)**： 提交事务
+-  **rollback(TransactionStatus status)：** 事务回滚
+
+```java
+//JDBC、MyBatis：DataSourceTransactionManager
+//JPA:JpaTransactionManager
+public interface PlatformTransactionManager extends TransactionManager {
+
+    TransactionStatus getTransaction(@Nullable TransactionDefinition definition)
+			throws TransactionException;
+    
+    void commit(TransactionStatus status) throws TransactionException;
+    
+    void rollback(TransactionStatus status) throws TransactionException;
+}
+```
+
+### 8.2 事务管理启动
+
+- **mode()：** 代理模式，JDK proxy或者AspectJ代理，默认JDK。
+
+```java
+@Target({ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Import(TransactionManagementConfigurationSelector.class)
+public @interface EnableTransactionManagement {
+
+    boolean proxyTargetClass() default false;
+    AdviceMode mode() default AdviceMode.PROXY;
+    int order() default Ordered.LOWEST_PRECEDENCE;
+}
+
+public class TransactionManagementConfigurationSelector extends 	AdviceModeImportSelector<EnableTransactionManagement> {
+    
+    @Override
+	protected String[] selectImports(AdviceMode adviceMode) {
+		switch (adviceMode) {
+			case PROXY:
+				return new String[] {AutoProxyRegistrar.class.getName(),
+						ProxyTransactionManagementConfiguration.class.getName()};
+			case ASPECTJ:
+				return new String[] {determineTransactionAspectClass()};
+			default:
+				return null;
+		}
+	}
+    
+}
+```
+
+### 8.3 事务的执行
+
+```java
+public abstract class TransactionAspectSupport implements BeanFactoryAware, InitializingBean {
+
+    private static final ThreadLocal<TransactionInfo> transactionInfoHolder =
+			new NamedThreadLocal<>("Current aspect-driven transaction");
+    
+   protected Object invokeWithinTransaction(Method method, 
+                                            @Nullable Class<?> targetClass,
+			final InvocationCallback invocation) throws Throwable {
+            
+   }
+    
+}
+```
 
