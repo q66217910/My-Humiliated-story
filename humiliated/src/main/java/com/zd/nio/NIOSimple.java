@@ -1,9 +1,8 @@
 package com.zd.nio;
 
 
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.LockSupport;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * nio 例子
@@ -13,30 +12,42 @@ public class NIOSimple {
 
     public static void main(String[] args) throws InterruptedException {
 
-        ReentrantLock lock = new ReentrantLock();
+        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(1, 1, 0,
+                TimeUnit.DAYS, new LinkedBlockingDeque<>(),
+                r -> {
+                    Thread thread = new Thread() {
 
-        Object obj = new Object();
+                        @Override
+                        public void setUncaughtExceptionHandler(UncaughtExceptionHandler eh) {
+                            new ExceptionHandler();
+                        }
 
-        Thread t1 = new Thread(() -> {
-            Thread.yield();
-            LockSupport.park();
-            System.out.println(22);
-        });
+                        @Override
+                        public void run() {
+                            r.run();
+                        }
 
-
-
-        Thread t2 = new Thread(() -> {
+                    };
+                    thread.setDaemon(false);
+                    thread.setUncaughtExceptionHandler(new ExceptionHandler());
+                    return thread;
+                });
+        Future<Integer> submit = threadPoolExecutor.submit(() -> {
             System.out.println(11);
+            return 1;
         });
+        try {
+            System.out.println(submit.get());
+        } catch (ExecutionException e) {
+            e.printStackTrace();
+        }
+    }
 
-        LockSupport.park();
-        LockSupport.parkNanos(111);
-        t1.wait();
-        t1.wait(111);
+    static class ExceptionHandler implements Thread.UncaughtExceptionHandler {
 
-        t1.start();
-        t2.start();
-        LockSupport.unpark(t1);
-
+        @Override
+        public void uncaughtException(Thread t, Throwable e) {
+            System.out.println(111);
+        }
     }
 }

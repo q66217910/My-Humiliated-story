@@ -239,6 +239,78 @@ public void execute(Runnable command) {
 
 
 
+#### 线程池的worker线程的工作原理
+
+1. 先解锁释放资源，防止中断
+2. 自选从工作队列中获取任务
+3. 进行加锁操作
+4. 如果线程池停止，确保线程中断
+5. 执行beforeExecute
+6. 执行任务的run方法
+7. 执行afterExecute
+8. 释放锁
+
+```java
+private final class Worker extends AbstractQueuedSynchronizer implements Runnable{
+    
+    final void runWorker(Worker w) {
+        Thread wt = Thread.currentThread();
+        Runnable task = w.firstTask;
+        w.firstTask = null;
+        //解锁，允许线程中断
+        w.unlock();
+        boolean completedAbruptly = true;
+        try {
+            while (task != null || (task = getTask()) != null) {
+                w.lock();
+                if ((runStateAtLeast(ctl.get(), STOP) ||
+                     (Thread.interrupted() &&
+                      runStateAtLeast(ctl.get(), STOP))) &&
+                    !wt.isInterrupted())
+                    wt.interrupt();
+                try {
+                    //任务执行前
+                    beforeExecute(wt, task);
+                    Throwable thrown = null;
+                    try {
+                        //开始执行任务
+                        task.run();
+                    } catch (RuntimeException x) {
+                        thrown = x; throw x;
+                    } catch (Error x) {
+                        thrown = x; throw x;
+                    } catch (Throwable x) {
+                        thrown = x; throw new Error(x);
+                    } finally {
+                        //任务执行后
+                        afterExecute(task, thrown);
+                    }
+                } finally {
+                    task = null;
+                    w.completedTasks++;
+                    w.unlock();
+                }
+            }
+            completedAbruptly = false;
+        } finally {
+            processWorkerExit(w, completedAbruptly);
+        }
+    }
+    
+}
+```
+
+
+
+#### 线程池的异常处理
+
+- **直接在Runnable任务中try catch**
+- **重写线程池的afterExecute方法**
+- **实现Thread.UncaughtExceptionHandler接口和继承ThreadGroup**
+- **采用Future模式(pool.sumbit)**
+
+
+
 #### 线程池核心数的选择
 
  *Nthreads = Ncpu \* (1+w/c)*  （w: *阻塞时间*  ,c: *计算时间* ）
@@ -795,3 +867,78 @@ final void runWorker(WorkQueue w) {
     }
 ```
 
+
+
+## 7.异步回调任务FutureTask
+
+#### 任务的运行
+
+1. 判断task的状态是new，并且runner没有被其他线程占用
+2. 执行包装了runable方法的callable方法。
+3. 失败则捕获异常设置异常值
+4. 若执行成功(将状态设置为COMPLETING)后，会设置结果值，然后将task的状态设置成NORMAL
+5. 最后唤醒等待节点(在get的时候会park线程，任务执行结束才会去unpark)。
+
+```java
+private volatile int state;
+private static final int NEW          = 0; //新建任务
+private static final int COMPLETING   = 1; //完成中
+private static final int NORMAL       = 2; //正常 NEW -> COMPLETING -> NORMAL
+private static final int EXCEPTIONAL  = 3; //异常 NEW -> COMPLETING -> EXCEPTIONAL
+private static final int CANCELLED    = 4; //取消 NEW -> CANCELLED
+private static final int INTERRUPTING = 5; //中断中
+private static final int INTERRUPTED  = 6; //已中断 NEW -> INTERRUPTING -> INTERRUPTED
+
+private volatile Thread runner;//可调用线程
+private volatile WaitNode waiters;//等待线程包装成的节点
+
+public class FutureTask<V> implements RunnableFuture<V> {
+
+    public void run() {
+        if (state != NEW ||
+            !UNSAFE.compareAndSwapObject(this, runnerOffset,
+                                         null, Thread.currentThread()))
+            return;
+        try {
+            //runnable包装的callable
+            Callable<V> c = callable;
+            if (c != null && state == NEW) {
+                V result;
+                boolean ran;
+                try {
+                    result = c.call();
+                    ran = true;
+                } catch (Throwable ex) {
+                    result = null;
+                    ran = false;
+                    setException(ex);
+                }
+                if (ran)
+                    set(result);
+            }
+        } finally {
+            runner = null;
+            int s = state;
+            if (s >= INTERRUPTING)
+                handlePossibleCancellationInterrupt(s);
+        }
+    }
+    
+    public V get() throws InterruptedException, ExecutionException {
+        int s = state;
+        if (s <= COMPLETING)
+            s = awaitDone(false, 0L);
+        return report(s);
+    }
+}
+```
+
+
+
+## 8. RedLock
+
+1.  获取当前时间（毫秒） 
+2.  尝试按顺序获取锁(lua setnx),计算锁的过期时间，使得所有的节点的锁在同时过期。（会设置超时时候,若某个实例不可用，尽快尝试下一个）
+3.  当且仅当客户端在半数节点上都成功获得了锁  ，而且总时间消耗小于锁有效时间，锁被认为获取成功 。
+4.  如果锁获取成功了，那么它的有效时间就是最初的锁有效时间减去之前获取锁所消耗的时间 
+5.  锁获取失败了 ， 将会尝试释放所有节点的锁 。

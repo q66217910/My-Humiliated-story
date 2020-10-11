@@ -555,3 +555,8 @@ reader.loadBeanDefinitions(xmlResource);
 
 - **JDK Proxy：** 只能代理实现代理的类 ( InvocationHandler. invoke())
 -  **cglib：**   针对类来实现代理 ， 对指定的目标类生成一个子类，并覆盖其中方法实现增强，但因为采用的是继承，所以不能对 final 修饰的类进行代理。( MethodInterceptor. intercept()) 
+
+
+
+## 5.@SpringBootApplication注解
+

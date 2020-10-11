@@ -3407,7 +3407,10 @@ private Observable<R> applyHystrixSemantics(final AbstractCommand<R> _cmd) {
 
 4. **尝试获取信号量：**获取到信号量执行线程，线程中会执行请求
 
-####  断路健康检查  :
+#### Hystrix隔离策略：
+
+- **信号量隔离:**   TryableSemaphoreActual  (记录当前请求信号量的线程数 和 初始化最大信号量 比较)
+- **线程池隔离(默认):**  executeCommandWithSpecifiedIsolation方法 (通过指定rxjava  Observable的线程进行指定 HystrixThreadPool 的线程池)
 
 ```java
 @Override

@@ -2254,8 +2254,8 @@ public class StringTool {
         int m = dictionary.length;
         int[] dp = new int[n + 1];
         for (int i = 1; i <= n; i++) {
-            dp[i] = dp[i-1];
-            for (int j = 0; j < m ; j++) {
+            dp[i] = dp[i - 1];
+            for (int j = 0; j < m; j++) {
                 if (i < dictionary[j].length()) continue;
                 if (sentence.substring(i - dictionary[j].length(), i).equals(dictionary[j])) {
                     dp[i] = Math.max(dp[i - dictionary[j].length()] + dictionary[j].length(), dp[i]);
@@ -2265,9 +2265,94 @@ public class StringTool {
         return n - dp[n];
     }
 
+    public int minOperations(String[] logs) {
+        int result = 0;
+        for (String log : logs) {
+            if (log.equals("../") && result > 0) {
+                result--;
+            } else if (!log.startsWith(".")) {
+                result++;
+            }
+        }
+        return result;
+    }
+
+    public int minOperationsMaxProfit(int[] customers, int boardingCost, int runningCost) {
+        int rs = 0;//次数
+        int num = 0;//剩余数
+        int count = 0;//人数
+        for (int customer : customers) {
+            if (customer + num > 0) {
+                int result = (customer + num) / 4; //次数
+                num = (customer + num) % 4;
+                rs += result;
+                count += customer;
+            }
+        }
+
+        rs = num > 0 && (num * boardingCost > runningCost) ? rs + 1 : rs;
+        if (rs * runningCost > count * boardingCost) {
+            return -1;
+        }
+        return rs;
+    }
+
+    class ThroneInheritance {
+
+        private People king;
+
+        private Map<String, People> map = new HashMap<>();
+
+        class People {
+
+            private String name;
+
+            private boolean dead;
+
+            private List<People> childs = new ArrayList<>();
+
+            public People(String name) {
+                this.name = name;
+            }
+        }
+
+        public ThroneInheritance(String kingName) {
+            this.king = new People(kingName);
+            map.put(kingName, this.king);
+        }
+
+        public void birth(String parentName, String childName) {
+            People people = map.get(parentName);
+            People child = new People(childName);
+            people.childs.add(child);
+            map.put(childName, child);
+        }
+
+        public void death(String name) {
+            People people = map.get(name);
+            people.dead = true;
+        }
+
+        public List<String> getInheritanceOrder() {
+            List<String> list = new ArrayList<>();
+            People root = this.king;
+            Stack<People> stack = new Stack<>();
+            stack.push(root);
+            while (!stack.isEmpty()) {
+                People pop = stack.pop();
+                if (!pop.dead) {
+                    list.add(pop.name);
+                }
+                for (int i = pop.childs.size() - 1; i > 0; i--) {
+                    stack.push(pop.childs.get(i));
+                }
+            }
+            return list;
+        }
+    }
 
 
     public static void main(String[] args) {
-        System.out.println(new StringTool().wordBreak("aaaaaaa", Lists.newArrayList("aaaa", "aaa")));
+        System.out.println(new StringTool().minOperationsMaxProfit(new int[]{10, 10, 1, 0, 0}, 4, 4));
     }
 }
