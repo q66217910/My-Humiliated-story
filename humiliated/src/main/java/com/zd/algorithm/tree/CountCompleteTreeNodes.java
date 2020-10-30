@@ -1,5 +1,7 @@
 package com.zd.algorithm.tree;
 
+import sun.misc.Unsafe;
+
 /**
  * 计算完全二叉树节点数
  */
@@ -41,5 +43,20 @@ public class CountCompleteTreeNodes {
         }
         return countChildTreeHigh(child.getLeft()) + 1;
     }
-    
+
+    public int sumNumbers(TreeNode root) {
+        if (root == null) {
+            return 0;
+        }
+        return sumNumbers(root, 0);
+    }
+
+    private int sumNumbers(TreeNode node, int value) {
+        value = value * 10 + node.value;
+        if (node.left == null && node.right == null) {
+            return value;
+        }
+        return (node.left != null ? sumNumbers(node.left, value) :
+            0) + (node.right != null ? sumNumbers(node.right, value) : 0);
+    }
 }

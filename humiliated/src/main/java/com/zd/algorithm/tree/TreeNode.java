@@ -8,17 +8,17 @@ public class TreeNode {
     /**
      * 当前节点值
      */
-    private int value;
+    public int value;
 
     /**
      * 左节点
      */
-    private TreeNode left;
+    public TreeNode left;
 
     /**
      * 右节点
      */
-    private TreeNode right;
+    public TreeNode right;
 
     public TreeNode(int value) {
         this.value = value;
