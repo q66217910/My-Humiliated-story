@@ -312,9 +312,19 @@
    **QUERY_NAME：** 
 
    -  **match_all：** 匹配所有文档
-   -  **match：** 匹配文档
+   -  **match：** 匹配文档 
+   -  **multi_match：** 可以在多个字段上执行同样的match。
+   -  **range：** 落在指定区间的数据(gt/gte/lt/lte)
+   -  **term：** 用于精确匹配。(包含)
+   -  **terms：** 允许指定多值进行精确匹配
+   -  **exists/missing：**  有值没值查询
 
-3. **组合查询：**
+3. **合并查询：** 
+
+   - **bool：** 布尔过滤器
+   - **constant_score：**  将一个不变的常量评分应用于所有匹配的文档。 
+
+4. **合并子查询：**
 
    -  **must ：** 条件满足AND
    -  **must_not ：** 条件不满足 ！AND
