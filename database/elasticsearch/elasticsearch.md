@@ -53,14 +53,32 @@
 
 - **范围类型 ：**  integer_range、float_range、long_range、double_range、date_range 
 
--  **JSON层级结构 :**  
+- **JSON层级结构 :**  
 
     - **object :** 单个对象
     - **nested :** 对象数组
 
--  **地理类型  ：**  
+- **地理类型  ：**  
 
     - **geo_point:** 用于地理位置经纬度坐标 
+
+      ```json
+      {
+       "location": { 
+          "lat":     40.722,
+          "lon":    -73.989
+        }
+      }//格式1
+      
+      {
+        "location": "40.715, -74.011"
+      }//格式2
+      
+      {
+        "location": [ -73.983, 40.719 ]
+      }//格式3
+      ```
+
     - **geo_shape:**  用于复杂形状 
 
 -  **专门的数据类型 :**
@@ -330,6 +348,14 @@
    -  **must_not ：** 条件不满足 ！AND
    -  **should ：** 满足一个或者多个条件 OR ( `minimum_should_match`  : 最少需要匹配的should数)
    -  **filter ：** 过滤，不参与评分
+
+#### 2.GEO的使用：
+
+**geo_point:** 
+
+-  [`geo_bounding_box：`](https://www.elastic.co/guide/cn/elasticsearch/guide/current/geo-bounding-box.html)  找出落在指定矩形框中的地点。 
+-  [`geo_distance：`](https://www.elastic.co/guide/cn/elasticsearch/guide/current/geo-distance.html)   找出与指定位置在给定距离内的地点。
+-  [`geo_distance_range：`](https://www.elastic.co/guide/cn/elasticsearch/guide/current/geo-distance.html#geo-distance-range)  找出与指定点距离在给定最小距离和最大距离之间的地点   
 
 
 
