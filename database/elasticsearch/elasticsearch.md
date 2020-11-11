@@ -359,6 +359,91 @@
 
 
 
+## 5.评分相关
+
+#### 1.TF-IDF算法
+
+TF-IDF = tf  *idf * fieldNorm
+
+- **词频(tf:词在文档中出现的频度)：** tf(t in d) = √frequency (frequency:出现次数)
+
+- **逆向文档频率(idf:词在文档中出现的频率)：**  idf(t) = 1 + log ( numDocs / (docFreq + 1))      
+
+  **numDocs :** 总文档数
+
+  **docFreq ：** 包含该词的文档数
+
+-  **字段长度归一值 (norm):**  字段内容越短， 字段的权重 *越高* 。norm(d) = 1 / √numTerms
+
+  **numTerms：** 字段中的词数
+
+  
+
+#### 2. Lucene评分函数
+
+```matlab
+score(q,d)= queryNorm(q)
+		  · coord(q,d)    
+          · ∑ (           
+                tf(t in d)   
+              · idf(t)²      
+              · t.getBoost() 
+              · norm(t,d)    
+            ) (t in q)  
+```
+
+- **score(q,d):** 是文档 `d` 与查询 `q` 的相关度评分。 
+- **queryNorm:** 查询归一因子
+- **coord：**  协调因子(协调包含度高的词的评分)
+- **t.getBoost() ：** 查询中使用的boost
+
+
+
+#### 3. Boost的使用
+
+**1.查询时提升权重**
+
+```json
+{
+	"fieldName":{
+		"query": "",
+        "boost": 2 
+	}
+}
+```
+
+**2.提升索引权重(indices_boost)**
+
+```json
+{
+  "indices_boost": { 
+    "docs_2014_10": 3,
+    "docs_2014_09": 2
+  }
+ }
+```
+
+
+
+#### 4.Function_score
+
+- **weight:** 权重值
+
+- **field_value_factor:**   用于修改 _score 
+
+  `new_score = old_score * number_of_votes`
+
+  -  **modifier:**   使评分更平滑， `new_score = old_score * log(1 + number_of_votes)` ( log 、log1p、 `log2p` 、 `ln` 、 `ln1p` 、 `ln2p` 、 `square` 、 `sqrt` 、 `reciprocal`  )
+  -  **factor:**  `new_score = old_score * log(1 + factor * number_of_votes)`
+  -  **boost_mode:** 函数值与原评分操作(multiply、sum、min、max、replace)
+  -  **max_boost:**  限制最大值
+
+- **random_score:**  每个用户随机评分结果排序
+
+- **script_score:**  脚本自定义评分计算
+
+- **linear、exp、gauss:**    将浮动值结合到评分 `_score` 中 
+
 
 
 ## 其他文章转载
