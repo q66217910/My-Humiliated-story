@@ -1,0 +1,155 @@
+#创建namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nacos
+  labels:
+    name: nacos
+---
+#nacos配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nacos-param
+  namespace: nacos
+data:
+  mysql.host: "www.uetty.com"
+  mysql.port: "3306"
+  mysql.name: "nacos"
+  mysql.user: "uetty"
+  mysql.password: "35#B!!)"
+  jvm.xms: "128m"
+  jvm.xmx: "128m"
+  jvm.xmn: "128m"
+---
+#nacos StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nacos
+  namespace: nacos
+spec:
+  serviceName: nacos
+  selector:
+    matchLabels:
+      app: nacos
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: nacos
+      annotations:
+        pod.alpha.kubernetes.io/initialized: "true"
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: "app"
+                    operator: In
+                    values:
+                      - nacos
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+        - name: nacos
+          image: nacos/nacos-server:latest
+          imagePullPolicy: Always
+          env:
+            - name: NACOS_REPLICAS
+              value: "3"
+            - name: MYSQL_SERVICE_HOST
+              valueFrom:
+                configMapKeyRef:
+                  key: mysql.host
+                  name: nacos-param
+            - name: MYSQL_SERVICE_PORT
+              valueFrom:
+                configMapKeyRef:
+                  key: mysql.port
+                  name: nacos-param
+            - name: MYSQL_SERVICE_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  key: mysql.name
+                  name: nacos-param
+            - name: MYSQL_SERVICE_USER
+              valueFrom:
+                configMapKeyRef:
+                  key: mysql.user
+                  name: nacos-param
+            - name: MYSQL_SERVICE_PASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  key: mysql.password
+                  name: nacos-param
+            - name: JVM_XMS
+              valueFrom:
+                configMapKeyRef:
+                  key: jvm.xms
+                  name: nacos-param
+            - name: JVM_XMX
+              valueFrom:
+                configMapKeyRef:
+                  key: jvm.xmx
+                  name: nacos-param
+            - name: JVM_XMN
+              valueFrom:
+                configMapKeyRef:
+                  key: jvm.xmn
+                  name: nacos-param
+            - name: PREFER_HOST_MODE
+              value: "hostname"
+            - name: NACOS_APPLICATION_PORT
+              value: "8848"
+            - name: NACOS_SERVER_PORT
+              value: "8848"
+            - name: NACOS_SERVERS
+              value: "nacos-0.nacos-headless.default.svc.cluster.local:8848 nacos-1.nacos-headless.default.svc.cluster.local:8848 nacos-2.nacos-headless.default.svc.cluster.local:8848"
+          ports:
+            - containerPort: 8848
+              name: server
+            - containerPort: 7848
+              name: rpc
+---
+#暴露内部端口
+apiVersion: v1
+kind: Service
+metadata:
+  name: nacos-headless
+  labels:
+    app: nacos-headless
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+  namespace: nacos
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 8848
+      protocol: TCP
+      name: server
+      targetPort: 8848
+    - port: 7848
+      name: rpc
+      targetPort: 7848
+  selector:
+    app: nacos
+---
+#暴露外部端口
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: nacos-headless
+  namespace: nacos
+  annotations:
+    kubernetes.io/ingress.class: naginx
+spec:
+  rules:
+    - host: host.touchfishes.com
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: nacos-headless
+              servicePort: server
