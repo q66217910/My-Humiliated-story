@@ -14,7 +14,7 @@ metadata:
   namespace: nacos
 data:
   mysql.host: "www.uetty.com"
-  mysql.port: "3306"
+  mysql.port: "8806"
   mysql.name: "nacos"
   mysql.user: "uetty"
   mysql.password: "35#B!!)"
@@ -29,7 +29,7 @@ metadata:
   name: nacos
   namespace: nacos
 spec:
-  serviceName: nacos
+  serviceName: nacos-headless
   selector:
     matchLabels:
       app: nacos
@@ -98,6 +98,8 @@ spec:
                 configMapKeyRef:
                   key: jvm.xmn
                   name: nacos-param
+            - name: SERVICE_NAME
+              value: nacos
             - name: PREFER_HOST_MODE
               value: "hostname"
             - name: NACOS_APPLICATION_PORT
@@ -105,29 +107,45 @@ spec:
             - name: NACOS_SERVER_PORT
               value: "8848"
             - name: NACOS_SERVERS
-              value: "nacos-0.nacos-headless.default.svc.cluster.local:8848 nacos-1.nacos-headless.default.svc.cluster.local:8848 nacos-2.nacos-headless.default.svc.cluster.local:8848"
+              value: "nacos-0.nacos-headless.nacos.svc.cluster.local:8848 nacos-1.nacos-headless.nacos.svc.cluster.local:8848 nacos-2.nacos-headless.nacos.svc.cluster.local:8848"
           ports:
             - containerPort: 8848
               name: server
             - containerPort: 7848
               name: rpc
 ---
-#暴露外部端口
+#暴露内部端口
 apiVersion: v1
 kind: Service
 metadata:
-  name: nacos-slb
+  name: nacos-headless
+  labels:
+    app: nacos-headless
   namespace: nacos
 spec:
-  type: NodePort
   ports:
     - port: 8848
-      protocol: TCP
-      name: http
-      targetPort: 8848
-      nodePort: 8848
+      name: server
     - port: 7848
       name: rpc
-      targetPort: 7848
+  publishNotReadyAddresses: true
   selector:
     app: nacos
+  clusterIP: None
+---
+#暴露外部端口
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: nacos-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+spec:
+  rules:
+    - host: host.touchfishes.com
+      http:
+        paths:
+          - path: /nacos
+            backend:
+              serviceName: nacos-headless
+              servicePort: 8848

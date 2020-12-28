@@ -97,6 +97,7 @@
    -  —kubernetes-version K8s版本，与上面安装的一致
    -  —service-cidr 集群内部虚拟网络，Pod统一访问入口
    -  —pod-network-cidr Pod网络，与下面部署的CNI网络组件yaml中保持一致
+   -  -proxy-mode  网络代理模式
 
    ```
    kubeadm init \
@@ -132,11 +133,35 @@
 
 ## 4.网络插件 flannel
 
-1. 安装
+2. 添加hosts
+
+   ```
+    sudo vi /etc/hosts
+    199.232.4.133 raw.githubusercontent.com
+   ```
+   
+3. 安装flannel
 
    ```
    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
    ```
+
+4. 创建ingress
+
+   ```
+   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v0.42.0/deploy/static/provider/cloud/deploy.yaml
+   ```
+
+5. 忽略错误
+
+   ```
+   kubectl edit ValidatingWebhookConfiguration/ingress-nginx-admission -n ingress-nginx
+   validatingwebhookconfiguration.admissionregistration.k8s.io/ingress-nginx-admission edited
+   
+   failurePolicy: Fail             ##################改成Ignore
+   ```
+
+   
 
 
 
