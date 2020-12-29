@@ -1,6 +1,8 @@
 package com.zd.nio;
 
 
+import com.sun.org.apache.xpath.internal.operations.String;
+
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -47,7 +49,8 @@ public class NIOSimple {
 
         @Override
         public void uncaughtException(Thread t, Throwable e) {
-            System.out.println(111);
+           float f = 1.0f;
+           f += 1.0;
         }
     }
 }

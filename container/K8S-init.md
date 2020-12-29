@@ -129,6 +129,12 @@
    systemctl restart kubelet
    ```
 
+6. master节点可运行pod(单机的可以使用)
+
+   ```
+   kubectl taint nodes --all node-role.kubernetes.io/master-
+   ```
+
    
 
 ## 4.网络插件 flannel
@@ -145,7 +151,8 @@
    ```
    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
    ```
-
+   
+2. 开启 ipvs 
 4. 创建ingress
 
    ```
@@ -159,6 +166,43 @@
    validatingwebhookconfiguration.admissionregistration.k8s.io/ingress-nginx-admission edited
    
    failurePolicy: Fail             ##################改成Ignore
+   ```
+
+   
+
+
+   ```
+   cat >> /etc/sysctl.conf << EOF
+   net.ipv4.ip_forward = 1
+   net.bridge.bridge-nf-call-iptables = 1
+   net.bridge.bridge-nf-call-ip6tables = 1
+   EOF
+    
+   sysctl -p
+   
+   yum -y install ipvsadm  ipset
+   
+   cat > /etc/sysconfig/modules/ipvs.modules <<EOF
+   modprobe -- ip_vs
+   modprobe -- ip_vs_rr
+   modprobe -- ip_vs_wrr
+   modprobe -- ip_vs_sh
+   modprobe -- nf_conntrack_ipv4
+   EOF
+   ```
+
+3. 修改kube-proxy
+
+   ```
+   kubectl edit cm kube-proxy -n kube-system
+   
+   修改 mode: "ipvs"  
+   ```
+
+4. 重启 kube-proxy 
+
+   ```
+   kubectl  get pod -n kube-system | grep kube-proxy | awk '{print $1}' | xargs kubectl delete pod -n kube-system
    ```
 
    
@@ -188,3 +232,18 @@
    kubectl create clusterrolebinding serviceaccount-cluster-admin   --clusterrole=cluster-admin   --user=system:serviceaccount:kubernetes-dashboard:kubernetes-dashboard
    
    ```
+
+4. 生成Kubeconfig 登录
+
+   在最后加上token： 刚刚生成的token，保存，然后把此文件copy出来。
+
+   ```
+   vim /root/.kube/config
+   ```
+
+   
+
+
+
+
+

@@ -473,8 +473,9 @@ reader.loadBeanDefinitions(xmlResource);
    
 4. **初始化ApplicationContext对象 :**
 
-   1. **prepareRefresh:**   
-
+   1. **prepareRefresh:**   设置启动日期和活动标志,初始化属性源(property source)配置
+2. **obtainFreshBeanFactory:** 销毁之前的beanFactory,将配置文件解析成BeanDefinition，生成一个新的beanFactory，注册到新的beanFactory。
+   
    ```java
    public abstract class AbstractApplicationContext extends DefaultResourceLoader
    	implements ConfigurableApplicationContext {
@@ -545,8 +546,8 @@ reader.loadBeanDefinitions(xmlResource);
    	}
        
    }
-   ```
-
+```
+   
    
 
 ## 4.SpringAOP
