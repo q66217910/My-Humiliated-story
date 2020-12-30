@@ -141,6 +141,8 @@ metadata:
   namespace: nacos
   annotations:
     kubernetes.io/ingress.class: "nginx"
+    ingress.kubernetes.io/force-ssl-redirect: "false"
+    ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   rules:
     - host: host.touchfishes.com
@@ -149,7 +151,7 @@ spec:
           - path: /nacos
             backend:
               serviceName: nacos-headless
-              servicePort: server
+              servicePort: 8848
 
 
 
