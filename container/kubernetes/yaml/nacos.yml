@@ -13,11 +13,11 @@ metadata:
   name: nacos-param
   namespace: nacos
 data:
-  mysql.host: "www.uetty.com"
+  mysql.host: "www.2342.com"
   mysql.port: "8806"
   mysql.name: "nacos"
-  mysql.user: "uetty"
-  mysql.password: "35#B!!)"
+  mysql.user: "234223"
+  mysql.password: "22234"
   jvm.xms: "128m"
   jvm.xmx: "128m"
   jvm.xmn: "128m"
